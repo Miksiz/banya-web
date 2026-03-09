@@ -59,6 +59,28 @@ canvas {
 	border: 1px solid #ff6b35;
 	pointer-events: none;
 }
+#log {
+	position: fixed;
+	bottom: 20px;
+	left: 20px;
+	color: #ff6b35;
+	font-family: 'Courier New', monospace;
+	font-size: 14px;
+	background: rgba(0, 0, 0, 0.7);
+	padding: 15px 25px;
+	border-radius: 8px;
+	border: 1px solid #ff6b35;
+	pointer-events: none;
+	/* max-height: 100px; */
+	max-width: 400px;
+}
+#log p {
+	margin: 3px 0;
+	opacity: 0.9;
+}
+#log span {
+	margin-right: 5px;
+}
 #click-to-start {
 	position: fixed;
 	top: 50%;
