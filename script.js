@@ -1,9 +1,14 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // Основные переменные
-let camera, scene, renderer;
+let camera, scene, renderer, composer, outlinePass;
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+let deleteMode = false;
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
 let euler = new THREE.Euler(0, 0, 0, 'YXZ'); // Для вычисления направления камеры
@@ -26,6 +31,38 @@ let touchActivity = {
     y: undefined,
 }
 
+// Класс для выбора объекта 
+class PickHelper {
+  constructor() {
+    this.raycaster = new THREE.Raycaster();
+  }
+  unpick() {
+    outlinePass.selectedObjects = [];
+  }
+  pick(normalizedPosition, scene, camera) {
+    // restore the color if there is a picked object
+    this.unpick();
+ 
+    camera.updateMatrixWorld();
+    // cast a ray through the frustum
+    this.raycaster.setFromCamera(normalizedPosition, camera);
+    // get the list of objects the ray intersected
+    const intersectedObjects = this.raycaster.intersectObjects(scene.children);
+    if (intersectedObjects.length) {
+      // pick the first object. It's the closest one
+      outlinePass.selectedObjects = [intersectedObjects[0].object];
+    }
+  }
+  deletePicked() {
+    if (outlinePass.selectedObjects.length == 0) return;
+    const objToRemove = outlinePass.selectedObjects[0];
+    outlinePass.selectedObjects = [];
+    objToRemove.parent.remove(objToRemove);
+  }
+}
+
+const pickHelper = new PickHelper();
+
 // Инициализация сцены
 function init() {
     // Сцена
@@ -47,6 +84,15 @@ function init() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.8;
     document.body.appendChild(renderer.domElement);
+    
+    composer = new EffectComposer( renderer );
+    const renderPass = new RenderPass( scene, camera );
+    composer.addPass( renderPass );
+    outlinePass = new OutlinePass(new THREE.Vector2(window.innerWidth, window.innerHeight), scene, camera);
+    composer.addPass( outlinePass );
+    const outputPass = new OutputPass()
+    composer.addPass( outputPass );
+
 
     // Создание парилки
     createSauna();
@@ -677,7 +723,7 @@ function addLogValue(log_div, row_title) {
 }
 
 function setLogValue(row_title, val) {
-    if (log_values.has(row_title)) log_values.get(row_title).innerHTML = val;
+    if (log_values.has(row_title)) log_values.get(row_title).innerHTML = val.toFixed(3);
 }
 
 function createLog() {
@@ -685,12 +731,15 @@ function createLog() {
     log_div.setAttribute('id', 'log');
     log_div.classList.add('hidden');
 
-    addLogValue(log_div, 'velocity.x');    
-    addLogValue(log_div, 'velocity.z');    
-    addLogValue(log_div, 'direction.x');    
+    addLogValue(log_div, 'camera.position.x');
+    addLogValue(log_div, 'camera.position.y');
+    addLogValue(log_div, 'camera.position.z'); 
+    addLogValue(log_div, 'velocity.x');
+    addLogValue(log_div, 'velocity.z');
+    addLogValue(log_div, 'direction.x');
     addLogValue(log_div, 'direction.z');
-    addLogValue(log_div, 'event.movementX');
-    addLogValue(log_div, 'event.movementY');
+    addLogValue(log_div, 'euler.x');
+    addLogValue(log_div, 'euler.y');
     addLogValue(log_div, 'camera.rotation.x');
     addLogValue(log_div, 'camera.rotation.y');
     addLogValue(log_div, 'camera.rotation.z');
@@ -714,6 +763,14 @@ function rotateCamera(movementX, movementY, sensitivity) {
 
     // Применяем к камере
     camera.quaternion.setFromEuler(euler);
+    
+    if (enableLog) {
+        setLogValue('euler.x', euler.x);
+        setLogValue('euler.y', euler.y);
+        setLogValue('camera.rotation.x', camera.rotation.x);
+        setLogValue('camera.rotation.y', camera.rotation.y);
+        setLogValue('camera.rotation.z', camera.rotation.z);
+    }
 }
 
 // Настройка управления
@@ -739,6 +796,7 @@ function setupControls() {
             document.getElementById('crosshair').classList.add('hidden');
             document.getElementById('temp-indicator').classList.add('hidden');
             if (enableLog) document.getElementById('log').classList.add('hidden');
+            pickHelper.unpick();
         }
     });
 
@@ -747,14 +805,6 @@ function setupControls() {
         if (!isLocked) return;
         
         rotateCamera(event.movementX || 0, event.movementY || 0, mouseSensitivity);
-
-        if (enableLog) {
-            setLogValue('event.movementX', event.movementX || 0);
-            setLogValue('event.movementY', event.movementY || 0);
-            setLogValue('camera.rotation.x', camera.rotation.x);
-            setLogValue('camera.rotation.y', camera.rotation.y);
-            setLogValue('camera.rotation.z', camera.rotation.z);
-        }
     });
 
     document.addEventListener('touchstart', (event) => {
@@ -797,6 +847,11 @@ function setupControls() {
         }
     });
 
+    document.addEventListener('mousedown', (event) => {
+        if (!isLocked || !deleteMode) return;
+        pickHelper.deletePicked();
+    })
+
     // Клавиатура
     document.addEventListener('keydown', (event) => {
         switch (event.code) {
@@ -815,6 +870,9 @@ function setupControls() {
             case 'KeyD':
             case 'ArrowRight':
                 moveRight = true;
+                break;
+            case 'KeyC':
+                deleteMode = true;
                 break;
         }
     });
@@ -836,6 +894,10 @@ function setupControls() {
             case 'KeyD':
             case 'ArrowRight':
                 moveRight = false;
+                break;
+            case 'KeyC':
+                deleteMode = false;
+                pickHelper.unpick();
                 break;
         }
     });
@@ -864,11 +926,6 @@ function animate(time) {
         if (Math.abs(velocity.x) < stopSpeed) velocity.x = 0;
         velocity.z -= velocity.z * slowDownSpeed * delta;
         if (Math.abs(velocity.z) < stopSpeed) velocity.z = 0;
-
-        if (enableLog) {
-            setLogValue('velocity.x', velocity.x);
-            setLogValue('velocity.z', velocity.z);
-        }
         
         direction.z = Number(moveForward) - Number(moveBackward);
         direction.x = Number(moveRight) - Number(moveLeft);
@@ -886,6 +943,11 @@ function animate(time) {
         }
         if (moveLeft || moveRight) {
             velocity.x += direction.x * speed * delta;
+        }
+
+        if (enableLog) {
+            setLogValue('velocity.x', velocity.x);
+            setLogValue('velocity.z', velocity.z);
         }
 
         // Применение движения с учётом направления камеры
@@ -906,6 +968,16 @@ function animate(time) {
         camera.position.x = Math.max(-2.7, Math.min(2.7, camera.position.x));
         camera.position.z = Math.max(-2.2, Math.min(2.2, camera.position.z));
         camera.position.y = 1.7; // Фиксированная высота (рост человека)
+
+        if (enableLog) {
+            setLogValue('camera.position.x', camera.position.x);
+            setLogValue('camera.position.y', camera.position.y);
+            setLogValue('camera.position.z', camera.position.z);
+        }
+        
+        if (deleteMode) {
+            pickHelper.pick({x: 0, y: 0}, scene, camera, time);
+        }
     }
 
     // Анимация пара
@@ -947,7 +1019,8 @@ function animate(time) {
         }
     });
 
-    renderer.render(scene, camera);
+    // renderer.render(scene, camera);
+    composer.render();
 }
 
 // Запуск
