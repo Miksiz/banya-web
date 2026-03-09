@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
 // Основные переменные
 let camera, scene, renderer;
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
@@ -8,10 +11,13 @@ let PI_2 = Math.PI / 2;
 const mouseSensitivity = 0.002;
 const touchSensitivity = 0.003;
 let isLocked = false;
-let steam = [];
-let clock = new THREE.Clock();
+let timer = new THREE.Timer();
+timer.connect(document);
 const enableLog = false;
 let log_values = new Map();
+
+// Создание загрузчика GLTF
+const gltfLoader = new GLTFLoader();
 
 let touchActivity = {
     inProgress: false,
@@ -25,7 +31,7 @@ function init() {
     // Сцена
     scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
-    scene.background = new THREE.Color(0x0f0705);
+    scene.background = new THREE.Color(0x966b4b);
 
     // Камера (вид от первого лица)
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -36,7 +42,8 @@ function init() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.8;
     document.body.appendChild(renderer.domElement);
@@ -58,6 +65,48 @@ function init() {
     window.addEventListener('resize', onWindowResize);
 
     animate();
+}
+
+function loadGLBModel(modelPath, position = new THREE.Vector3(0, 0, 0), 
+                      rotation = new THREE.Euler(0, 0, 0), 
+                      scale = new THREE.Vector3(1, 1, 1)) {
+    return new Promise((resolve, reject) => {
+        gltfLoader.load(
+            modelPath,
+            (gltf) => {
+                const model = gltf.scene;
+                
+                // Применяем трансформации
+                model.position.copy(position);
+                model.rotation.copy(rotation);
+                model.scale.copy(scale);
+                
+                // Включаем тени для всех меши в модели
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+                
+                // Добавляем модель в сцену
+                scene.add(model);
+                
+                console.log(`Модель ${modelPath} успешно загружена`);
+                resolve(model);
+            },
+            // (progress) => {
+            //     // Прогресс загрузки
+            //     const percentLoaded = Math.round((progress.loaded / progress.total) * 100);
+            //     console.log(`Загрузка: ${percentLoaded}%`);
+            // },
+            undefined,
+            (error) => {
+                console.error(`Ошибка загрузки модели ${modelPath}:`, error);
+                reject(error);
+            }
+        );
+    });
 }
 
 // Создание текстуры дерева
@@ -109,6 +158,7 @@ function createSauna() {
     const wallTexture = createWoodTexture('#8B4513');
     const ceilingTexture = createWoodTexture('#a0522d');
     const floorTexture = createWoodTexture('#5a3520');
+    const doorTexture = createWoodTexture('#4b2d1bff');
 
     // Размеры парилки
     const width = 6;
@@ -138,6 +188,7 @@ function createSauna() {
     ceiling.position.y = height;
     ceiling.rotation.x = Math.PI / 2;
     ceiling.receiveShadow = true;
+    ceiling.castShadow = true;
     scene.add(ceiling);
 
     // Стены
@@ -174,78 +225,107 @@ function createSauna() {
     rightWall.position.set(width / 2, height / 2, 0);
     rightWall.rotation.y = -Math.PI / 2;
     rightWall.receiveShadow = true;
+    rightWall.castShadow = true;
     scene.add(rightWall);
 
     // Передняя стена с дверью
     const frontWallGroup = new THREE.Group();
-    
+
     // Верхняя часть над дверью
     const topPart = new THREE.Mesh(
         new THREE.PlaneGeometry(width, 0.8),
         wallMaterial
     );
     topPart.position.set(0, height - 0.4, depth / 2);
+    topPart.rotation.y = Math.PI;
+    topPart.receiveShadow = true;
+    topPart.castShadow = true;
     frontWallGroup.add(topPart);
 
     // Левая часть стены
+    const leftFrameOffset = 1.2
     const leftPart = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.5, height - 0.8),
+        new THREE.PlaneGeometry(width / 2 + leftFrameOffset, height - 0.8),
         wallMaterial
     );
-    leftPart.position.set(-width / 2 + 0.75, (height - 0.8) / 2, depth / 2);
+    leftPart.position.set(leftFrameOffset/2 - width/4, (height - 0.8) / 2, depth / 2);
+    leftPart.rotation.y = Math.PI;
+    leftPart.receiveShadow = true;
+    leftPart.castShadow = true;
     frontWallGroup.add(leftPart);
-
+    
+    const rightFrameOffset = 2.4
     // Правая часть стены
     const rightPart = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.5, height - 0.8),
+        new THREE.PlaneGeometry(width / 2 - rightFrameOffset, height - 0.8),
         wallMaterial
     );
-    rightPart.position.set(width / 2 - 0.75, (height - 0.8) / 2, depth / 2);
+
+    rightPart.position.set(rightFrameOffset/2 + width/4, (height - 0.8) / 2, depth / 2);
+    rightPart.rotation.y = Math.PI;
+    rightPart.receiveShadow = true;
+    rightPart.castShadow = true;
     frontWallGroup.add(rightPart);
 
     // Рама двери
-    const doorFrameMaterial = new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.9 });
+    const doorFrameMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9, metalness: 0.1 });
     const frameThickness = 0.08;
 
     // Вертикальные части рамы
     const frameGeo = new THREE.BoxGeometry(frameThickness, 2.2, frameThickness);
     const leftFrame = new THREE.Mesh(frameGeo, doorFrameMaterial);
-    leftFrame.position.set(-0.95, 1.1, depth / 2);
+    leftFrame.position.set(leftFrameOffset, 1.1, depth / 2);
+    leftFrame.receiveShadow = true;
+    // leftFrame.castShadow = true;
     frontWallGroup.add(leftFrame);
-
+    
     const rightFrame = new THREE.Mesh(frameGeo, doorFrameMaterial);
-    rightFrame.position.set(0.95, 1.1, depth / 2);
+    rightFrame.position.set(rightFrameOffset, 1.1, depth / 2);
+    rightFrame.receiveShadow = true;
+    // rightFrame.castShadow = true;
     frontWallGroup.add(rightFrame);
-
+    
     // Горизонтальная часть рамы
     const topFrame = new THREE.Mesh(
-        new THREE.BoxGeometry(2 + frameThickness * 2, frameThickness, frameThickness),
+        new THREE.BoxGeometry((rightFrameOffset-leftFrameOffset) + frameThickness * 2, frameThickness, frameThickness),
         doorFrameMaterial
     );
-    topFrame.position.set(0, 2.2, depth / 2);
+    topFrame.position.set((rightFrameOffset+leftFrameOffset)/2, 2.2, depth / 2);
+    topFrame.receiveShadow = true;
+    // topFrame.castShadow = true;
     frontWallGroup.add(topFrame);
 
     scene.add(frontWallGroup);
 
     // Дверь (полупрозрачная)
-    const doorGeometry = new THREE.PlaneGeometry(1.9, 2.2);
+    const doorGeometry = new THREE.PlaneGeometry(rightFrameOffset-leftFrameOffset, 2.2);
+    // const doorMaterial = new THREE.MeshStandardMaterial({
+    //     color: 0x654321,
+    //     transparent: true,
+    //     opacity: 0.8,
+    //     roughness: 0.5,
+    //     metalness: 0.2
+    // });
+    // const door = new THREE.Mesh(doorGeometry, doorMaterial);
     const doorMaterial = new THREE.MeshStandardMaterial({
-        color: 0x654321,
-        transparent: true,
-        opacity: 0.6,
-        roughness: 0.5,
-        metalness: 0.2
+        map: doorTexture,
+        roughness: 0.9,
+        metalness: 0.05
     });
     const door = new THREE.Mesh(doorGeometry, doorMaterial);
-    door.position.set(0, 1.1, depth / 2 - 0.01);
+    door.position.set((rightFrameOffset+leftFrameOffset)/2, 1.1, depth / 2 - 0.01);
+    door.rotation.y = Math.PI;
+    door.receiveShadow = true;
+    // door.castShadow = true;
     scene.add(door);
 
     // Дверная ручка
     const handleGeometry = new THREE.CylinderGeometry(0.03, 0.03, 0.15, 8);
-    const handleMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.4, metalness: 0.8 });
-    const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+    // const handleMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.4, metalness: 0.8 });
+    const handle = new THREE.Mesh(handleGeometry, doorFrameMaterial);
     handle.rotation.x = Math.PI / 2;
-    handle.position.set(0.6, 1.1, depth / 2 - 0.05);
+    handle.position.set(rightFrameOffset-0.18, 1.1, depth / 2 - 0.05);
+    handle.receiveShadow = true;
     scene.add(handle);
 }
 
@@ -347,26 +427,28 @@ function createBench() {
     // Сиденье
     const seatGeometry = new THREE.BoxGeometry(1.8, 0.08, 0.6);
     const seat1 = new THREE.Mesh(seatGeometry, benchMaterial);
-    seat1.position.set(0, 0.5, -2.2);
+    seat1.position.set(0, 0.6, -1.4);
     seat1.castShadow = true;
     seat1.receiveShadow = true;
     bench1Group.add(seat1);
 
     // Ножки
-    const legGeometry = new THREE.BoxGeometry(0.08, 0.45, 0.08);
-    const positions = [[-0.8, 0.225, -2.4], [-0.8, 0.225, -2], [0.8, 0.225, -2.4], [0.8, 0.225, -2]];
+    const legGeometry = new THREE.BoxGeometry(0.08, 0.6, 0.08);
+    const positions = [[-0.8, 0.3, -1.7], [-0.8, 0.3, -1.15], [0.8, 0.3, -1.7], [0.8, 0.3, -1.15]];
     positions.forEach(pos => {
         const leg = new THREE.Mesh(legGeometry, benchMaterial);
         leg.position.set(...pos);
         leg.castShadow = true;
+        leg.receiveShadow = true;
         bench1Group.add(leg);
     });
 
     // Спинка
     const backGeometry = new THREE.BoxGeometry(1.8, 0.5, 0.05);
     const back1 = new THREE.Mesh(backGeometry, benchMaterial);
-    back1.position.set(0, 0.75, -2.45);
+    back1.position.set(0, 0.85, -1.725);
     back1.castShadow = true;
+    back1.receiveShadow = true;
     bench1Group.add(back1);
 
     scene.add(bench1Group);
@@ -425,107 +507,33 @@ function createBench() {
 // Создание аксессуаров
 function createAccessories() {
     // Ведро
-    const bucketGroup = new THREE.Group();
-    
-    const bucketGeometry = new THREE.CylinderGeometry(0.15, 0.12, 0.25, 16, 1, true);
-    const bucketMaterial = new THREE.MeshStandardMaterial({
-        color: 0x654321,
-        roughness: 0.8,
-        metalness: 0.1,
-        side: THREE.DoubleSide
-    });
-    const bucket = new THREE.Mesh(bucketGeometry, bucketMaterial);
-    bucket.position.set(2, 0.125, -1.5);
-    bucket.castShadow = true;
-    bucketGroup.add(bucket);
-
-    // Дно ведра
-    const bottomGeometry = new THREE.CircleGeometry(0.12, 16);
-    const bottom = new THREE.Mesh(bottomGeometry, bucketMaterial);
-    bottom.rotation.x = -Math.PI / 2;
-    bottom.position.set(2, 0.01, -1.5);
-    bucketGroup.add(bottom);
-
-    // Деревянные полоски на ведре
-    for (let i = 0; i < 3; i++) {
-        const stripGeometry = new THREE.BoxGeometry(0.32, 0.03, 0.01);
-        const strip = new THREE.Mesh(stripGeometry, bucketMaterial);
-        strip.position.set(2, 0.08 + i * 0.08, -1.5);
-        bucketGroup.add(strip);
-    }
-
-    // Ручка ведра
-    const handleGeometry = new THREE.TorusGeometry(0.14, 0.015, 8, 24, Math.PI);
-    const handleMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.6, metalness: 0.7 });
-    const handle = new THREE.Mesh(handleGeometry, handleMaterial);
-    handle.position.set(2, 0.28, -1.5);
-    handle.rotation.x = Math.PI;
-    bucketGroup.add(handle);
-
-    scene.add(bucketGroup);
-
-    // Шайка (деревянная кружка)
-    const dipperGroup = new THREE.Group();
-    
-    const dipperGeometry = new THREE.CylinderGeometry(0.06, 0.05, 0.12, 12, 1, true);
-    const dipper = new THREE.Mesh(dipperGeometry, bucketMaterial);
-    dipper.position.set(2.2, 0.06, -1.3);
-    dipper.rotation.z = 0.3;
-    dipper.castShadow = true;
-    dipperGroup.add(dipper);
-
-    // Вода в шайке
-    const waterGeometry = new THREE.CircleGeometry(0.05, 12);
-    const waterMaterial = new THREE.MeshStandardMaterial({
-        color: 0x3366aa,
-        transparent: true,
-        opacity: 0.6,
-        roughness: 0.1,
-        metalness: 0.3
-    });
-    const water = new THREE.Mesh(waterGeometry, waterMaterial);
-    water.rotation.x = -Math.PI / 2;
-    water.rotation.z = 0.3;
-    water.position.set(2.2, 0.1, -1.3);
-    dipperGroup.add(water);
-
-    scene.add(dipperGroup);
-
-    // Веник (берёзовый)
-    const whiskGroup = new THREE.Group();
-    
-    // Ручка веника
-    const handleWiskGeometry = new THREE.CylinderGeometry(0.025, 0.03, 0.5, 8);
-    const handleWhiskMaterial = new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 0.9 });
-    const handleWhisk = new THREE.Mesh(handleWiskGeometry, handleWhiskMaterial);
-    handleWhisk.position.set(2.4, 0.25, -1.7);
-    handleWhisk.rotation.z = Math.PI / 6;
-    whiskGroup.add(handleWhisk);
-
-    // Листья/ветки веника
-    for (let i = 0; i < 20; i++) {
-        const leafGeometry = new THREE.ConeGeometry(0.01, 0.3 + Math.random() * 0.2, 4);
-        const leafMaterial = new THREE.MeshStandardMaterial({
-            color: new THREE.Color().setHSL(0.25 + Math.random() * 0.08, 0.5, 0.3 + Math.random() * 0.1),
-            roughness: 0.9
+    loadGLBModel('assets/woodenbucketa.glb', new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
+        // Рисуем воду в ведре
+        const bb = new THREE.Box3();
+        bb.setFromObject(model);
+        const width = bb.max.x - bb.min.x;
+        const innerRadius = width*0.7 / 2;
+        const x = (bb.max.x + bb.min.x) / 2;
+        const z = (bb.max.z + bb.min.z) / 2;
+        const height = bb.max.y - bb.min.y;
+        const fillAmount = 0.6
+        const y = bb.min.y + height*fillAmount;
+        
+        const waterGeometry = new THREE.CircleGeometry(innerRadius, 12);
+        const waterMaterial = new THREE.MeshStandardMaterial({
+            color: 0x3366aa,
+            transparent: true,
+            opacity: 0.6,
+            roughness: 0.1,
+            metalness: 0.3
         });
-        const leaf = new THREE.Mesh(leafGeometry, leafMaterial);
-        const angle = Math.random() * Math.PI * 2;
-        const radius = Math.random() * 0.08;
-        leaf.position.set(
-            2.4 + Math.cos(angle) * radius + 0.1,
-            0.45 + Math.random() * 0.15,
-            -1.7 + Math.sin(angle) * radius
-        );
-        leaf.rotation.set(
-            (Math.random() - 0.5) * 0.8 + 0.5,
-            Math.random() * Math.PI * 2,
-            (Math.random() - 0.5) * 0.8
-        );
-        whiskGroup.add(leaf);
-    }
-
-    scene.add(whiskGroup);
+        const water = new THREE.Mesh(waterGeometry, waterMaterial);
+        water.rotation.x = -Math.PI / 2;
+        // water.rotation.y = 0.1; // поворот относительно горизонта
+        water.rotation.z = 0.3;
+        water.position.set(x, y, z);
+        scene.add(water);
+    })
 
     // Часы на стене
     const clockGroup = new THREE.Group();
@@ -550,9 +558,9 @@ function createAccessories() {
     hourHand.position.set(0.03, 2.2, -2.47);
     clockGroup.add(hourHand);
 
-    const minuteHandGeo = new THREE.BoxGeometry(0.11, 0.01, 0.003);
+    const minuteHandGeo = new THREE.BoxGeometry(0.12, 0.01, 0.003);
     const minuteHand = new THREE.Mesh(minuteHandGeo, handMaterial);
-    minuteHand.position.set(0.02, 2.2, -2.47);
+    minuteHand.position.set(0.025, 2.24, -2.47);
     minuteHand.rotation.z = Math.PI / 4;
     clockGroup.add(minuteHand);
 
@@ -576,7 +584,7 @@ function createAccessories() {
     const mercuryGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.18, 12);
     const mercuryMaterial = new THREE.MeshStandardMaterial({ color: 0xff3333 });
     const mercury = new THREE.Mesh(mercuryGeometry, mercuryMaterial);
-    mercury.position.set(-1.5, 2.02, -2.47);
+    mercury.position.set(-1.5, 1.98, -2.47);
     thermometerGroup.add(mercury);
 
     scene.add(thermometerGroup);
@@ -584,25 +592,26 @@ function createAccessories() {
 
 // Создание освещения
 function createLighting() {
-    // Ambient light (мягкое填充ное освещение)
-    const ambientLight = new THREE.AmbientLight(0xff9966, 0.15);
+    // Ambient light (мягкое освещение)
+    const ambientLight = new THREE.AmbientLight(0xff9966, 0.5);
     scene.add(ambientLight);
 
     // Тёплый солнечный/световой поток (имитация света через дверь)
-    const sunLight = new THREE.SpotLight(0xffaa66, 0.8, 10, Math.PI / 6, 0.3);
-    sunLight.position.set(0, 2.5, 3);
-    sunLight.target.position.set(0, 1, -1);
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
-    sunLight.shadow.camera.near = 1;
-    sunLight.shadow.camera.far = 10;
-    scene.add(sunLight);
-    scene.add(sunLight.target);
+    // const sunLight = new THREE.SpotLight(0xffaa66, 15.0, 8, Math.PI / 3, 0.9);
+    // sunLight.position.set(4, 2.5, 6);
+    // sunLight.target.position.set(2, 1, -1);
+    // sunLight.castShadow = true;
+    // sunLight.shadow.mapSize.width = 1024;
+    // sunLight.shadow.mapSize.height = 1024;
+    // sunLight.shadow.camera.near = 1;
+    // sunLight.shadow.camera.far = 10;
+    // scene.add(sunLight);
+    // scene.add(sunLight.target);
 
     // Дополнительное тёплое освещение сверху
-    const ceilingLight = new THREE.PointLight(0xff8844, 0.5, 6);
-    ceilingLight.position.set(0, 2.7, -1);
+    const ceilingLight = new THREE.PointLight(0xff8844, 2.0, 6);
+    ceilingLight.position.set(0, 2.7, 1);
+    ceilingLight.castShadow = true;
     scene.add(ceilingLight);
 
     // Отражённый свет от горячих камней
@@ -627,8 +636,8 @@ function createSteam() {
 }
 
 function createSteamParticle(material) {
-    const size = 0.2 + Math.random() * 0.4;
-    const geometry = new THREE.PlaneGeometry(size, size);
+    const size = 0.2 + Math.random() * 0.2;
+    const geometry = new THREE.CircleGeometry(size, 12);
     const steam = new THREE.Mesh(geometry, material.clone());
     
     steam.position.set(
@@ -839,10 +848,11 @@ function onWindowResize() {
 }
 
 // Анимация
-function animate() {
+function animate(time) {
     requestAnimationFrame(animate);
 
-    const delta = clock.getDelta();
+    timer.update(time);
+    const delta = timer.getDelta();
 
     if (isLocked) {
         // Движение
