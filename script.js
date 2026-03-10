@@ -8,7 +8,6 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // Основные переменные
 let camera, scene, renderer, composer, outlinePass;
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-let deleteMode = false;
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
 let euler = new THREE.Euler(0, 0, 0, 'YXZ'); // Для вычисления направления камеры
@@ -32,36 +31,231 @@ let touchActivity = {
 }
 
 // Класс для выбора объекта 
-class PickHelper {
+class ObjectSelector {
   constructor() {
+    this.enabled = false;
+    this.selected = undefined;
     this.raycaster = new THREE.Raycaster();
+    this.pickedUp = undefined;
+    this.pickedRotating = undefined;
+    this.verticalRotationOn = false;
+    this.horizontalRotationOn = true;
+
+    
+    // Константы
+    this.objectMoveSpeed = 8.0;
+    this.objectHoldMinDistance = 0.5;
+    this.objectHoldMaxDistance = 5;
+    this.objectHoldDefaultDistance = 2;
+    this.objectRotateSpeed = 8.0;
+    
+    // Переменные
+    this.objectHoldDistance = this.objectHoldDefaultDistance;
+    this.objectRotation = undefined;
+
   }
-  unpick() {
-    outlinePass.selectedObjects = [];
-  }
-  pick(normalizedPosition, scene, camera) {
-    // restore the color if there is a picked object
-    this.unpick();
- 
+  getLookedAtObject(normalizedPosition = {x: 0, y: 0}) {
     camera.updateMatrixWorld();
-    // cast a ray through the frustum
     this.raycaster.setFromCamera(normalizedPosition, camera);
-    // get the list of objects the ray intersected
     const intersectedObjects = this.raycaster.intersectObjects(scene.children);
-    if (intersectedObjects.length) {
-      // pick the first object. It's the closest one
-      outlinePass.selectedObjects = [intersectedObjects[0].object];
+    // Возвращаем пустое значение, если не было объектов
+    if (!intersectedObjects.length) return undefined;
+    // Первый ближайший объект, если есть пересечения
+    const intersectedObject = intersectedObjects[0].object;
+    // Взаимодействие не всегда с тем, с которым произошло пересечение, поэтому проходим по interactionObject атрибуту пока он указан до родителя
+    // Необходимо для правильного выбора объекта в случае загруженных из gltf файлов (при загрузке для каждого указать это свойство правильно)
+    let interactionObject = intersectedObject;
+    while (Object.hasOwn(interactionObject, 'interactionObject')) interactionObject = interactionObject.interactionObject;
+    return interactionObject;
+  }
+  update_outlined_object() {
+    if (this.selected) outlinePass.selectedObjects = [this.selected];
+    else outlinePass.selectedObjects = []
+  }
+  select(normalizedPosition = {x: 0, y: 0}) {
+    const lookedAtObject = this.getLookedAtObject(normalizedPosition);
+    if (lookedAtObject === this.selected) return;
+    this.selected = lookedAtObject;
+    this.pickedUp = false;
+    this.pickedRotating = false;
+    this.update_outlined_object();
+  }
+  deselect() {
+    this.selected = undefined;
+    this.pickedUp = undefined;
+    this.pickedRotating = undefined;
+    this.objectRotation = undefined;
+    this.update_outlined_object();
+  }
+  pickUp() {
+    if (!this.selected) return;
+    this.pickedUp = true;
+    this.objectHoldDistance = this.objectHoldDefaultDistance;
+
+    camera.updateMatrixWorld();
+    this.selected.updateMatrixWorld();
+    // Получаем кватернион камеры
+    const cameraQuaternion = new THREE.Quaternion();
+    camera.getWorldQuaternion(cameraQuaternion);
+
+    // R = C⁻¹ × O  — смещение относительно камеры как кватернион
+    // Для того, чтобы объект поворачивался вверх/вниз при взгляде камеры выше/ниже
+    // Для работы требуется, чтобы был согласованный исходный квартенион в moveSelectedObjectToCamera
+    // this.objectRotation = cameraQuaternion.clone().invert().multiply(this.selected.quaternion.clone());
+
+    // Вектор "вперёд" в локальных координатах камеры (negative Z)
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(cameraQuaternion);
+    
+    // Проецируем на горизонтальную плоскость XZ
+    forward.y = 0;
+    forward.normalize();
+    
+    // Вычисляем Y-угол: atan2(x, z) работает корректно во всех квадрантах
+    const yAngle = Math.atan2(forward.x, forward.z);
+    const cameraYQuaternion = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        yAngle
+    );
+    
+    // R = (C_y)⁻¹ × O — смещение относительно Y-вращения камеры
+    this.objectRotation = cameraYQuaternion.clone().invert().multiply(this.selected.quaternion.clone());
+  }
+  changeObjectHoldDistance(delta) {
+    if (!this.pickedUp) return;
+    this.objectHoldDistance += 0.001*delta;
+    if (this.objectHoldDistance < this.objectHoldMinDistance) this.objectHoldDistance = this.objectHoldMinDistance;
+    if (this.objectHoldDistance > this.objectHoldMaxDistance) this.objectHoldDistance = this.objectHoldMaxDistance;
+  }
+  putDown() {
+    if (!this.selected) return;
+    this.pickedUp = false;
+  }
+  pickUpToggle() {
+    if (!this.pickedUp) this.pickUp();
+    else this.putDown();
+  }
+  rotationStart() {
+    this.pickedRotating = true;
+  }
+  rotationStop() {
+    this.pickedRotating = false;
+  }
+  toggleVerticalRotation() {
+    if (!this.enabled) return;
+    this.verticalRotationOn = !this.verticalRotationOn;
+  }
+  toggleHorizontalRotation() {
+    if (!this.enabled) return;
+    this.horizontalRotationOn = !this.horizontalRotationOn;
+  }
+  rotate(movementX, movementY, sensitivity) {
+    if (!this.objectRotation) return;
+    if (movementX == 0 && movementY == 0) return;
+
+    // Создаём кватернионы приращения вокруг локальных осей камеры
+    const deltaY = new THREE.Quaternion()
+    if (this.horizontalRotationOn) {
+        deltaY.setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0), 
+            movementX * sensitivity
+        );
+    }
+    const deltaX = new THREE.Quaternion()
+    if (this.verticalRotationOn) {
+        deltaX.setFromAxisAngle(
+            new THREE.Vector3(1, 0, 0), 
+            -movementY * sensitivity
+        );
+    }
+    
+    // Объединяем (Y → X для естественного порядка: yaw, затем pitch)
+    const deltaRotation = new THREE.Quaternion().copy(deltaY).multiply(deltaX);
+    
+    // Вращаем в пространстве камеры: R' = δ × R (умножение слева = premultiply)
+    this.objectRotation.premultiply(deltaRotation);
+  }
+  enable() {
+    this.enabled = true;
+    this.select();
+  }
+  disable() {
+    this.deselect();
+    this.enabled = false;
+  }
+  toggle() {
+    if (this.enabled) this.disable();
+    else this.enable();
+  }
+  delete() {
+    if (!this.enabled || !this.selected) return;
+    this.selected.parent.remove(this.selected);
+    this.deselect();
+  }
+  moveSelectedObjectToCamera(delta) {
+    if (!this.selected) return;
+
+    camera.updateMatrixWorld();
+    // Получаем позицию камеры и направление взгляда
+    const cameraPosition = new THREE.Vector3();
+    const cameraDirection = new THREE.Vector3();
+    const cameraQuaternion = new THREE.Quaternion();
+    // Получаем мировую позицию камеры
+    camera.getWorldPosition(cameraPosition);
+    // Получаем направление взгляда камеры
+    camera.getWorldDirection(cameraDirection);
+    camera.getWorldQuaternion(cameraQuaternion);
+
+    // Сразу перемащаем в позицию камеры
+    const targetPosition = cameraPosition.add(cameraDirection.multiplyScalar(this.objectHoldDistance));
+
+    // Для того, чтобы объект поворачивался вверх/вниз при взгляде камеры выше/ниже
+    // Для работы требуется, чтобы был согласованный исходный квартенион в pickUp
+    // Перемещаем запрошенный поворот объекта в позицию камеры
+    // const targetQuaternion = cameraQuaternion.clone().multiply(this.objectRotation);
+
+    // Извлекаем Y-вращение камеры через вектор направления
+    const forward = new THREE.Vector3(0, 0, -1);
+    forward.applyQuaternion(cameraQuaternion);
+    forward.y = 0;
+    forward.normalize();
+    
+    const yAngle = Math.atan2(forward.x, forward.z);
+    const cameraYQuaternion = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        yAngle
+    );
+    
+    // targetQuaternion = C_y × R
+    const targetQuaternion = cameraYQuaternion.clone().multiply(this.objectRotation);
+
+    this.selected.updateMatrixWorld();
+    
+
+    // Плавное перемещение
+    if (this.selected.position.distanceTo(targetPosition) < 0.01) {
+        this.selected.position.copy(targetPosition);
+    } else {
+        this.selected.position.lerp(targetPosition, this.objectMoveSpeed*delta);
+    }
+    // Плавное перемещение
+    if (this.selected.quaternion.angleTo(targetQuaternion) < 0.01) {
+        this.selected.quaternion.copy(targetQuaternion);
+    } else {
+        this.selected.quaternion.slerp(targetQuaternion, this.objectRotateSpeed*delta);
     }
   }
-  deletePicked() {
-    if (outlinePass.selectedObjects.length == 0) return;
-    const objToRemove = outlinePass.selectedObjects[0];
-    outlinePass.selectedObjects = [];
-    objToRemove.parent.remove(objToRemove);
+  update(delta) {
+    if (!this.enabled) return;
+    if (this.pickedUp) {
+        this.moveSelectedObjectToCamera(delta);
+        return;
+    }
+    this.select();
   }
 }
 
-const pickHelper = new PickHelper();
+const objectSelector = new ObjectSelector();
 
 // Инициализация сцены
 function init() {
@@ -524,6 +718,7 @@ function createBench() {
     scene.add(bench2Group);
 
     // Лавка слева
+    const tmpGroup = new THREE.Group();
     const leftBenchGroup = new THREE.Group();
     
     const leftSeat = new THREE.Mesh(
@@ -533,8 +728,9 @@ function createBench() {
     leftSeat.position.set(-2.6, 0.5, -0.5);
     leftSeat.castShadow = true;
     leftSeat.receiveShadow = true;
-    leftBenchGroup.add(leftSeat);
-
+    leftSeat.interactionObject = leftBenchGroup;
+    tmpGroup.add(leftSeat);
+    
     // Ножки левой лавки
     const leftLegPositions = [
         [-2.85, 0.225, -1.3], [-2.85, 0.225, 0.3], 
@@ -544,9 +740,14 @@ function createBench() {
         const leg = new THREE.Mesh(legGeometry, benchMaterial);
         leg.position.set(...pos);
         leg.castShadow = true;
-        leftBenchGroup.add(leg);
+        leg.interactionObject = leftBenchGroup;
+        tmpGroup.add(leg);
     });
 
+    const bbox = new THREE.Box3().setFromObject(tmpGroup);
+    tmpGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
+    leftBenchGroup.add(tmpGroup);
+    leftBenchGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2)
     scene.add(leftBenchGroup);
 }
 
@@ -554,6 +755,8 @@ function createBench() {
 function createAccessories() {
     // Ведро
     loadGLBModel('assets/woodenbucketa.glb', new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
+        // Задаем параметр interactionObject для Mesh, которая выбирается при наведении
+        model.children[0].children[0].children[0].children[0].interactionObject = model;
         // Рисуем воду в ведре
         const bb = new THREE.Box3();
         bb.setFromObject(model);
@@ -641,18 +844,6 @@ function createLighting() {
     // Ambient light (мягкое освещение)
     const ambientLight = new THREE.AmbientLight(0xff9966, 0.5);
     scene.add(ambientLight);
-
-    // Тёплый солнечный/световой поток (имитация света через дверь)
-    // const sunLight = new THREE.SpotLight(0xffaa66, 15.0, 8, Math.PI / 3, 0.9);
-    // sunLight.position.set(4, 2.5, 6);
-    // sunLight.target.position.set(2, 1, -1);
-    // sunLight.castShadow = true;
-    // sunLight.shadow.mapSize.width = 1024;
-    // sunLight.shadow.mapSize.height = 1024;
-    // sunLight.shadow.camera.near = 1;
-    // sunLight.shadow.camera.far = 10;
-    // scene.add(sunLight);
-    // scene.add(sunLight.target);
 
     // Дополнительное тёплое освещение сверху
     const ceilingLight = new THREE.PointLight(0xff8844, 2.0, 6);
@@ -796,14 +987,17 @@ function setupControls() {
             document.getElementById('crosshair').classList.add('hidden');
             document.getElementById('temp-indicator').classList.add('hidden');
             if (enableLog) document.getElementById('log').classList.add('hidden');
-            pickHelper.unpick();
+            objectSelector.disable();
         }
     });
 
     // Движение мыши (осмотр)
     document.addEventListener('mousemove', (event) => {
         if (!isLocked) return;
-        
+        if (objectSelector.pickedRotating) {
+            objectSelector.rotate(event.movementX || 0, event.movementY || 0, mouseSensitivity);
+            return;
+        }
         rotateCamera(event.movementX || 0, event.movementY || 0, mouseSensitivity);
     });
 
@@ -848,9 +1042,31 @@ function setupControls() {
     });
 
     document.addEventListener('mousedown', (event) => {
-        if (!isLocked || !deleteMode) return;
-        pickHelper.deletePicked();
+        if (!isLocked || !objectSelector.enabled) return;
+        if (event.button == 0) {
+            objectSelector.pickUpToggle();
+        } else if (event.button == 1) {
+            objectSelector.delete();
+        } else if (event.button == 2) {
+            objectSelector.rotationStart();
+        }
     })
+
+    document.addEventListener('mouseup', (event) => {
+        if (!isLocked || !objectSelector.enabled) return;
+        if (event.button == 2) {
+            objectSelector.rotationStop();
+        }
+    })
+    
+    document.addEventListener('wheel', (event) => {
+        if (!isLocked || !objectSelector.enabled) return;
+        // Передаем обратное значение
+        // Колесо вниз - event.deltaY положительное - сдивинуть к себе, т.е. уменьшить, поэтому значение обратное
+        objectSelector.changeObjectHoldDistance(-event.deltaY);
+    })
+
+
 
     // Клавиатура
     document.addEventListener('keydown', (event) => {
@@ -872,7 +1088,13 @@ function setupControls() {
                 moveRight = true;
                 break;
             case 'KeyC':
-                deleteMode = true;
+                objectSelector.toggle();
+                break;
+            case 'KeyX':
+                objectSelector.toggleHorizontalRotation();
+                break;
+            case 'KeyZ':
+                objectSelector.toggleVerticalRotation();
                 break;
         }
     });
@@ -895,10 +1117,9 @@ function setupControls() {
             case 'ArrowRight':
                 moveRight = false;
                 break;
-            case 'KeyC':
-                deleteMode = false;
-                pickHelper.unpick();
-                break;
+            // case 'KeyC':
+            //     objectSelector.disable();
+            //     break;
         }
     });
 }
@@ -975,9 +1196,7 @@ function animate(time) {
             setLogValue('camera.position.z', camera.position.z);
         }
         
-        if (deleteMode) {
-            pickHelper.pick({x: 0, y: 0}, scene, camera, time);
-        }
+        objectSelector.update(delta);
     }
 
     // Анимация пара
