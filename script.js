@@ -4,9 +4,11 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import RAPIER from '@dimforge/rapier3d-compat';
 
 // Основные переменные
 let camera, scene, renderer, composer, outlinePass;
+let steamParticles = [];
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
@@ -20,6 +22,14 @@ timer.connect(document);
 const enableLog = false;
 let log_values = new Map();
 
+let rapierWorld = null;
+let playerBody = null;
+let playerCollider = null;
+const uninitializedDynamicBodies = new Map();
+const dynamicBodies = new Map(); // Связь Three.js объектов с их физическими телами
+let rapierInitialized = false;
+let rapierDebugRenderer
+
 // Создание загрузчика GLTF
 const gltfLoader = new GLTFLoader();
 
@@ -30,6 +40,21 @@ let touchActivity = {
     y: undefined,
 }
 
+async function initRapier() {
+    await RAPIER.init();
+    
+    // Создаём физический мир с гравитацией
+    const gravity = { x: 0.0, y: -9.81, z: 0.0 };
+    rapierWorld = new RAPIER.World(gravity);
+    
+    console.log('Rapier physics initialized');
+    return true;
+}
+// Вспомогательная функция создания вектора Rapier
+function rapierVec(x, y, z) {
+    return { x, y, z };
+}
+
 // Класс для выбора объекта 
 class ObjectSelector {
   constructor() {
@@ -38,7 +63,7 @@ class ObjectSelector {
     this.raycaster = new THREE.Raycaster();
     this.pickedUp = undefined;
     this.pickedRotating = undefined;
-    this.verticalRotationOn = false;
+    this.verticalRotationOn = true;
     this.horizontalRotationOn = true;
 
     
@@ -66,6 +91,9 @@ class ObjectSelector {
     // Необходимо для правильного выбора объекта в случае загруженных из gltf файлов (при загрузке для каждого указать это свойство правильно)
     let interactionObject = intersectedObject;
     while (Object.hasOwn(interactionObject, 'interactionObject')) interactionObject = interactionObject.interactionObject;
+    // Проверка, что объект интерактивный, закомментировать, чтобы можно было выбирать любые объекты
+    if (!(interactionObject.interactable ?? false)) return undefined;
+
     return interactionObject;
   }
   update_outlined_object() {
@@ -91,6 +119,17 @@ class ObjectSelector {
     if (!this.selected) return;
     this.pickedUp = true;
     this.objectHoldDistance = this.objectHoldDefaultDistance;
+
+    // console.log('picked up', this.selected.uuid);
+    // === Отключаем физику при подборе ===
+    const physicsData = dynamicBodies.get(this.selected.uuid);
+    if (physicsData) {
+        // Переключаем в кинематический режим для управления вручную
+        physicsData.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+        physicsData.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        physicsData.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        // console.log('disabled physics', this.selected.uuid);
+    }
 
     camera.updateMatrixWorld();
     this.selected.updateMatrixWorld();
@@ -130,6 +169,14 @@ class ObjectSelector {
   putDown() {
     if (!this.selected) return;
     this.pickedUp = false;
+    // === Включаем физику при отпускании ===
+    const physicsData = dynamicBodies.get(this.selected.uuid);
+    if (physicsData) {
+        // Возвращаем динамический режим
+        physicsData.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        // console.log('restored physics')
+    }
+
   }
   pickUpToggle() {
     if (!this.pickedUp) this.pickUp();
@@ -245,6 +292,15 @@ class ObjectSelector {
         this.selected.quaternion.slerp(targetQuaternion, this.objectRotateSpeed*delta);
     }
   }
+  log_object_parameters() {
+    if (!this.enabled || !this.selected) return;
+    console.log(this.selected);
+    console.log('Position: ', this.selected.getWorldPosition(new THREE.Vector3()));
+    console.log('Rotation: ', this.selected.getWorldDirection(new THREE.Vector3()));
+    console.log('Quaternion: ', this.selected.getWorldQuaternion(new THREE.Quaternion()));
+    const bbox = new THREE.Box3().setFromObject(this.selected)
+    console.log('Bounding box: ', bbox.min, bbox.max, new THREE.Vector3().copy(bbox.max).sub(bbox.min));
+  }
   update(delta) {
     if (!this.enabled) return;
     if (this.pickedUp) {
@@ -257,8 +313,41 @@ class ObjectSelector {
 
 const objectSelector = new ObjectSelector();
 
+class RapierDebugRenderer {
+  mesh
+  world
+  enabled = true
+
+  constructor(scene, world) {
+    this.world = world
+    this.mesh = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, vertexColors: true }))
+    this.mesh.frustumCulled = false
+    scene.add(this.mesh)
+  }
+
+  update() {
+    if (this.enabled) {
+      const { vertices, colors } = this.world.debugRender()
+      this.mesh.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3))
+      this.mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
+      this.mesh.visible = true
+    } else {
+      this.mesh.visible = false
+    }
+  }
+}
+
 // Инициализация сцены
-function init() {
+async function init() {
+    // === Сначала инициализируем Rapier ===
+    try {
+        rapierInitialized = await initRapier();
+    } catch (error) {
+        console.error('Ошибка инициализации Rapier:', error);
+        // Продолжаем без физики
+    }
+
+
     // Сцена
     scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
@@ -292,9 +381,27 @@ function init() {
     createSauna();
     createStove();
     createBench();
+
+    // === Создаём физические коллизии для статических объектов ===
+    if (rapierInitialized) {
+        createAllStaticColliders();
+        createPlayerPhysics();
+        // Установка начальной позиции игрока
+        if (playerBody) {
+            // Стартовая позиция — в центре парилки
+            const startPos = { x: 0, y: 0.85, z: 0 };
+            playerBody.setTranslation(startPos, true);
+            
+            // Начальная скорость ноль
+            playerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+            
+            console.log('Player spawned at', startPos);
+        }
+        // rapierDebugRenderer = new RapierDebugRenderer(scene, rapierWorld)
+    }
+
     createAccessories();
     createLighting();
-    createSteam();
 
     if (enableLog) createLog();
 
@@ -390,6 +497,44 @@ function createWoodTexture(baseColor, darken = 0) {
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(2, 2);
 
+    return texture;
+}
+
+function createMeshTexture(baseColor, meshSize = 10) {
+    const canvas = document.createElement('canvas');
+    const textureSize = meshSize*10;
+    canvas.width = textureSize;
+    canvas.height = textureSize;
+    const ctx = canvas.getContext('2d');
+
+
+    ctx.strokeStyle = baseColor;
+    ctx.lineWidth = Math.max(1, meshSize/10);
+    for (let y = 0; y < textureSize; y += meshSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(textureSize-y-1, textureSize-1);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(textureSize-1, y);
+        ctx.lineTo(y-1, textureSize-1);
+        ctx.stroke();
+    }
+    for (let x = meshSize; x < textureSize; x += meshSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(textureSize-1, textureSize-x-1);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(textureSize-x, 0);
+        ctx.lineTo(0, textureSize-x-1);
+        ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(4, 1);
     return texture;
 }
 
@@ -569,9 +714,84 @@ function createSauna() {
     scene.add(handle);
 }
 
+// Создание пара
+function createSteam(group, interactionObject) {
+    const steamMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.15,
+        depthWrite: false
+    });
+
+    // Начальное облако пара
+    for (let i = 0; i < 25; i++) {
+        createSteamParticle(steamMaterial, group, interactionObject);
+    }
+}
+
+function createSteamParticle(material, group, interactionObject) {
+    const size = 0.2 + Math.random() * 0.2;
+    const geometry = new THREE.CircleGeometry(size, 12);
+    const steam = new THREE.Mesh(geometry, material.clone());
+    
+    steam.position.set(
+        -2.3 + (Math.random() - 0.5) * 0.5,
+        1.3 + Math.random() * 0.3,
+        -2 + (Math.random() - 0.5) * 0.5
+    );
+    
+    steam.rotation.set(
+        Math.random() * Math.PI,
+        Math.random() * Math.PI,
+        Math.random() * Math.PI
+    );
+    
+    steam.userData = {
+        velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.3,
+            0.3 + Math.random() * 0.3,
+            (Math.random() - 0.5) * 0.3
+        ),
+        life: 0,
+        maxLife: 3 + Math.random() * 2
+    };
+    steam.interactionObject = interactionObject
+    group.add(steam);
+    steamParticles.push(steam);
+}
+
+function animateSteam(delta) {
+    steamParticles.forEach(steam => {
+        steam.position.add(steam.userData.velocity.clone().multiplyScalar(delta));
+        steam.userData.life += delta;
+        // Затухание
+        steam.material.opacity = 0.15 * (1 - steam.userData.life / steam.userData.maxLife);
+        // Растягивание пара
+        steam.scale.setScalar(1 + steam.userData.life * 0.3);
+        
+        // Удаление старого пара и создание нового
+        if (steam.userData.life > steam.userData.maxLife) {
+            steam.position.set(
+                -2.3 + (Math.random() - 0.5) * 0.5,
+                1.3 + Math.random() * 0.3,
+                -2 + (Math.random() - 0.5) * 0.5
+            );
+            steam.userData.life = 0;
+            steam.userData.velocity.set(
+                (Math.random() - 0.5) * 0.3,
+                0.3 + Math.random() * 0.3,
+                (Math.random() - 0.5) * 0.3
+            );
+            steam.material.opacity = 0.15;
+            steam.scale.setScalar(1);
+        }
+    })
+}
+
 // Создание печи-каменки
 function createStove() {
     const stoveGroup = new THREE.Group();
+    const stoveInnerGroup = new THREE.Group();
 
     // Основание печи
     const baseGeometry = new THREE.BoxGeometry(0.8, 0.9, 0.6);
@@ -584,7 +804,8 @@ function createStove() {
     base.position.set(-2.3, 0.45, -2);
     base.castShadow = true;
     base.receiveShadow = true;
-    stoveGroup.add(base);
+    base.interactionObject = stoveGroup;
+    stoveInnerGroup.add(base);
 
     // Топка (с дверцей)
     const doorGeometry = new THREE.BoxGeometry(0.35, 0.25, 0.05);
@@ -595,7 +816,8 @@ function createStove() {
     });
     const door = new THREE.Mesh(doorGeometry, doorMaterial);
     door.position.set(-2.3, 0.35, -1.67);
-    stoveGroup.add(door);
+    door.interactionObject = stoveGroup;
+    stoveInnerGroup.add(door);
 
     // Свечение из топки
     const glowGeometry = new THREE.PlaneGeometry(0.3, 0.2);
@@ -606,50 +828,85 @@ function createStove() {
     });
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     glow.position.set(-2.3, 0.35, -1.66);
-    stoveGroup.add(glow);
+    glow.interactionObject = stoveGroup;
+    stoveInnerGroup.add(glow);
+
 
     // Контейнер для камней
-    const stonesContainerGeometry = new THREE.CylinderGeometry(0.35, 0.38, 0.4, 12);
-    const stonesContainer = new THREE.Mesh(stonesContainerGeometry, stoveMaterial);
+    const meshTexture = createMeshTexture('#302c29ff');
+    const containerMaterial = new THREE.MeshStandardMaterial({
+        map: meshTexture,
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        roughness: 0.6,
+        metalness: 0.9
+    });
+    const stonesContainerGeometry = new THREE.CylinderGeometry(0.45, 0.3, 0.3, 24, 1, true);
+    const stonesContainer = new THREE.Mesh(stonesContainerGeometry, containerMaterial);
     stonesContainer.position.set(-2.3, 1.1, -2);
     stonesContainer.castShadow = true;
-    stoveGroup.add(stonesContainer);
+    stonesContainer.interactionObject = stoveGroup;
+    stoveInnerGroup.add(stonesContainer);
 
     // Камни
     for (let i = 0; i < 25; i++) {
-        const stoneGeometry = new THREE.DodecahedronGeometry(0.08 + Math.random() * 0.06, 0);
+        const stoneGeometry = new THREE.DodecahedronGeometry(0.08 + Math.random() * 0.03, 0);
         const stoneMaterial = new THREE.MeshStandardMaterial({
             color: new THREE.Color().setHSL(0.05 + Math.random() * 0.05, 0.2, 0.25 + Math.random() * 0.15),
             roughness: 0.8,
             metalness: 0.1
         });
         const stone = new THREE.Mesh(stoneGeometry, stoneMaterial);
-        const angle = Math.random() * Math.PI * 2;
-        const radius = Math.random() * 0.28;
+        // const angle = Math.random() * Math.PI * 2;
+        // const radius = Math.random() * 0.38;
+        // stone.position.set(
+        //     -2.3 + Math.cos(angle) * radius,
+        //     1.0 + Math.random() * 0.3,
+        //     -2 + Math.sin(angle) * radius
+        // );
+        const height = 0.3/25*(i+1);
+        const angle = 159*Math.PI/25*(i+5);
+        const radius = 0.25;
         stone.position.set(
             -2.3 + Math.cos(angle) * radius,
-            1.15 + Math.random() * 0.25,
+            1.0 + height,
             -2 + Math.sin(angle) * radius
         );
         stone.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
         stone.castShadow = true;
-        stoveGroup.add(stone);
+        stone.interactionObject = stoveGroup;
+        stoveInnerGroup.add(stone);
     }
 
     // Труба
-    const pipeGeometry = new THREE.CylinderGeometry(0.12, 0.15, 1.5, 12);
+    const pipeGeometry = new THREE.CylinderGeometry(0.12, 0.15, 2, 12);
     const pipe = new THREE.Mesh(pipeGeometry, stoveMaterial);
     pipe.position.set(-2.3, 2.05, -2);
     pipe.castShadow = true;
-    stoveGroup.add(pipe);
+    pipe.interactionObject = stoveGroup;
+    stoveInnerGroup.add(pipe);
 
-    scene.add(stoveGroup);
-
+    
     // Свет от печи
     const stoveLight = new THREE.PointLight(0xff6622, 1.5, 4);
     stoveLight.position.set(-2.3, 1.5, -2);
     stoveLight.castShadow = true;
-    scene.add(stoveLight);
+    stoveInnerGroup.add(stoveLight);
+
+    // Отражённый свет от горячих камней
+    const stoneGlow = new THREE.PointLight(0xff6633, 0.4, 2);
+    stoneGlow.position.set(-2.3, 1.3, -2);
+    stoveInnerGroup.add(stoneGlow);
+
+    createSteam(stoveInnerGroup, stoveGroup);
+
+    const bbox = new THREE.Box3().setFromObject(stoveInnerGroup);
+    stoveInnerGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
+    stoveGroup.add(stoveInnerGroup);
+    stoveGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
+    stoveGroup.interactable = true;
+    scene.add(stoveGroup);
 }
 
 // Создание лавок
@@ -663,6 +920,7 @@ function createBench() {
 
     // Нижняя лавка
     const bench1Group = new THREE.Group();
+    const bench1InnerGroup = new THREE.Group();
     
     // Сиденье
     const seatGeometry = new THREE.BoxGeometry(1.8, 0.08, 0.6);
@@ -670,7 +928,8 @@ function createBench() {
     seat1.position.set(0, 0.6, -1.4);
     seat1.castShadow = true;
     seat1.receiveShadow = true;
-    bench1Group.add(seat1);
+    seat1.interactionObject = bench1Group;
+    bench1InnerGroup.add(seat1);
 
     // Ножки
     const legGeometry = new THREE.BoxGeometry(0.08, 0.6, 0.08);
@@ -680,7 +939,8 @@ function createBench() {
         leg.position.set(...pos);
         leg.castShadow = true;
         leg.receiveShadow = true;
-        bench1Group.add(leg);
+        leg.interactionObject = bench1Group;
+        bench1InnerGroup.add(leg);
     });
 
     // Спинка
@@ -689,13 +949,10 @@ function createBench() {
     back1.position.set(0, 0.85, -1.725);
     back1.castShadow = true;
     back1.receiveShadow = true;
-    bench1Group.add(back1);
-
-    scene.add(bench1Group);
+    back1.interactionObject = bench1Group;
+    bench1InnerGroup.add(back1);
 
     // Верхняя лавка (полка)
-    const bench2Group = new THREE.Group();
-
     const seat2 = new THREE.Mesh(
         new THREE.BoxGeometry(1.8, 0.08, 0.8),
         benchMaterial
@@ -703,7 +960,8 @@ function createBench() {
     seat2.position.set(0, 1.1, -2.1);
     seat2.castShadow = true;
     seat2.receiveShadow = true;
-    bench2Group.add(seat2);
+    seat2.interactionObject = bench1Group;
+    bench1InnerGroup.add(seat2);
 
     // Опоры
     const supportGeometry = new THREE.BoxGeometry(0.08, 1.05, 0.08);
@@ -712,10 +970,18 @@ function createBench() {
         const support = new THREE.Mesh(supportGeometry, benchMaterial);
         support.position.set(...pos);
         support.castShadow = true;
-        bench2Group.add(support);
+        support.receiveShadow = true;
+        support.interactionObject = bench1Group;
+        bench1InnerGroup.add(support);
     });
 
-    scene.add(bench2Group);
+    var bbox = new THREE.Box3().setFromObject(bench1InnerGroup);
+    bench1InnerGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
+    bench1Group.add(bench1InnerGroup);
+    bench1Group.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
+    bench1Group.interactable = true;
+    scene.add(bench1Group);
+    uninitializedDynamicBodies.set('bench1', bench1Group);
 
     // Лавка слева
     const tmpGroup = new THREE.Group();
@@ -725,7 +991,7 @@ function createBench() {
         new THREE.BoxGeometry(0.6, 0.08, 2),
         benchMaterial
     );
-    leftSeat.position.set(-2.6, 0.5, -0.5);
+    leftSeat.position.set(-2.6, 0.6, -0.5);
     leftSeat.castShadow = true;
     leftSeat.receiveShadow = true;
     leftSeat.interactionObject = leftBenchGroup;
@@ -733,8 +999,8 @@ function createBench() {
     
     // Ножки левой лавки
     const leftLegPositions = [
-        [-2.85, 0.225, -1.3], [-2.85, 0.225, 0.3], 
-        [-2.35, 0.225, -1.3], [-2.35, 0.225, 0.3]
+        [-2.85, 0.3, -1.3], [-2.85, 0.3, 0.3], 
+        [-2.35, 0.3, -1.3], [-2.35, 0.3, 0.3]
     ];
     leftLegPositions.forEach(pos => {
         const leg = new THREE.Mesh(legGeometry, benchMaterial);
@@ -744,24 +1010,30 @@ function createBench() {
         tmpGroup.add(leg);
     });
 
-    const bbox = new THREE.Box3().setFromObject(tmpGroup);
+    bbox = new THREE.Box3().setFromObject(tmpGroup);
     tmpGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
     leftBenchGroup.add(tmpGroup);
-    leftBenchGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2)
+    leftBenchGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
+    leftBenchGroup.interactable = true;
     scene.add(leftBenchGroup);
+    uninitializedDynamicBodies.set('leftBench', leftBenchGroup);
 }
 
 // Создание аксессуаров
 function createAccessories() {
     // Ведро
     loadGLBModel('assets/woodenbucketa.glb', new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
+        const bucketGroup = new THREE.Group();
+        const tmpGroup = new THREE.Group();
         // Задаем параметр interactionObject для Mesh, которая выбирается при наведении
-        model.children[0].children[0].children[0].children[0].interactionObject = model;
+        model.children[0].children[0].children[0].children[0].interactionObject = bucketGroup;
+        tmpGroup.add(model)
+
         // Рисуем воду в ведре
         const bb = new THREE.Box3();
         bb.setFromObject(model);
         const width = bb.max.x - bb.min.x;
-        const innerRadius = width*0.7 / 2;
+        const innerRadius = width*0.65 / 2;
         const x = (bb.max.x + bb.min.x) / 2;
         const z = (bb.max.z + bb.min.z) / 2;
         const height = bb.max.y - bb.min.y;
@@ -781,7 +1053,51 @@ function createAccessories() {
         // water.rotation.y = 0.1; // поворот относительно горизонта
         water.rotation.z = 0.3;
         water.position.set(x, y, z);
-        scene.add(water);
+        water.interactionObject = bucketGroup;
+        tmpGroup.add(water);
+
+        const bbox = new THREE.Box3().setFromObject(tmpGroup);
+        tmpGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
+        bucketGroup.add(tmpGroup);
+        bucketGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
+
+        scene.add(bucketGroup);
+
+        // === Добавляем физику для ведра ===
+        if (rapierWorld) {
+            // Вычисляем bounding box для точных размеров
+            const bb = new THREE.Box3().setFromObject(bucketGroup);
+            const size = new THREE.Vector3();
+            bb.getSize(size);
+            
+            // Создаём динамическое rigid body
+            const bucketDesc = RAPIER.RigidBodyDesc.dynamic()
+                .setTranslation(bucketGroup.position.x, bucketGroup.position.y, bucketGroup.position.z)
+                .setRotation({w: bucketGroup.quaternion._w, x: bucketGroup.quaternion._x, y: bucketGroup.quaternion._y, z: bucketGroup.quaternion._z})
+                .setLinearDamping(0.5)     // Сопротивление движению
+                .setAngularDamping(0.5);   // Сопротивление вращению
+            
+            const bucketBody = rapierWorld.createRigidBody(bucketDesc);
+            
+            // Создаём коллайдер (ящик вместо точной формы для производительности)
+            const bucketColliderDesc = RAPIER.ColliderDesc.cylinder(size.y*0.9 / 2, size.x*0.65 / 2)
+                .setTranslation(-0.02, -0.02, 0.02)
+                .setMass(2.0)            // Масса в кг
+                .setFriction(0.6)         // Трение дерева
+                .setRestitution(0.2);     // Небольшая упругость
+            
+            rapierWorld.createCollider(bucketColliderDesc, bucketBody);
+            
+            // Сохраняем связь между Three.js объектом и физическим телом
+            dynamicBodies.set(bucketGroup.uuid, {
+                mesh: bucketGroup,
+                body: bucketBody
+            });
+            
+            bucketGroup.userData.physicsBody = bucketBody;
+            bucketGroup.userData.isDynamic = true;
+            bucketGroup.interactable = true;
+        }
     })
 
     // Часы на стене
@@ -851,55 +1167,264 @@ function createLighting() {
     ceilingLight.castShadow = true;
     scene.add(ceilingLight);
 
-    // Отражённый свет от горячих камней
-    const stoneGlow = new THREE.PointLight(0xff6633, 0.4, 2);
-    stoneGlow.position.set(-2.3, 1.3, -2);
-    scene.add(stoneGlow);
 }
 
-// Создание пара
-function createSteam() {
-    const steamMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.15,
-        depthWrite: false
+
+function createPhysicsWalls() {
+    if (!rapierWorld) return;
+    
+    // Размеры парилки (из createSauna)
+    const width = 6;
+    const height = 3;
+    const depth = 5;
+    
+    // === Пол ===
+    const floorDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(0, 0, 0);
+    const floorBody = rapierWorld.createRigidBody(floorDesc);
+    const floorColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.01, depth / 2);
+    rapierWorld.createCollider(floorColliderDesc, floorBody);
+    
+    // === Потолок ===
+    const ceilingDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(0, height, 0);
+    const ceilingBody = rapierWorld.createRigidBody(ceilingDesc);
+    const ceilingColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.01, depth / 2)
+    rapierWorld.createCollider(ceilingColliderDesc, ceilingBody);
+    
+    // === Задняя стена ===
+    const backWallDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(0, height / 2, -depth / 2);
+    const backWallBody = rapierWorld.createRigidBody(backWallDesc);
+    const backWallColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, height / 2, 0.01);
+    rapierWorld.createCollider(backWallColliderDesc, backWallBody);
+    
+    // // === Левая стена ===
+    const leftWallDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(-width / 2, height / 2, 0);
+    const leftWallBody = rapierWorld.createRigidBody(leftWallDesc);
+    const leftWallColliderDesc = RAPIER.ColliderDesc.cuboid(0.01, height / 2, depth / 2);
+    rapierWorld.createCollider(leftWallColliderDesc, leftWallBody);
+    
+    // // === Правая стена ===
+    const rightWallDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(width / 2, height / 2, 0);
+    const rightWallBody = rapierWorld.createRigidBody(rightWallDesc);
+    const rightWallColliderDesc = RAPIER.ColliderDesc.cuboid(0.01, height / 2, depth / 2);
+    rapierWorld.createCollider(rightWallColliderDesc, rightWallBody);
+    
+    // === Передняя стена ===
+    const frontWallDesc = RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(0, height / 2, depth / 2);
+    const frontWallBody = rapierWorld.createRigidBody(frontWallDesc);
+    const frontWallColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, height / 2, 0.01);
+    rapierWorld.createCollider(frontWallColliderDesc, frontWallBody);
+
+
+    // // === Передняя стена (с дверью) ===
+    // // Левая часть передней стены
+    // const leftFrameOffset = 1.2;
+    // const frontLeftDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(leftFrameOffset / 2 - width / 4, (height - 0.8) / 2, depth / 2));
+    // const frontLeftBody = rapierWorld.createRigidBody(frontLeftDesc);
+    // const frontLeftColliderDesc = RAPIER.ColliderDesc.cuboid(width / 4 + leftFrameOffset / 2, (height - 0.8) / 2, 0.01);
+    // rapierWorld.createCollider(frontLeftColliderDesc, frontLeftBody);
+    
+    // // Правая часть передней стены
+    // const rightFrameOffset = 2.4;
+    // const frontRightDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(rightFrameOffset / 2 + width / 4, (height - 0.8) / 2, depth / 2));
+    // const frontRightBody = rapierWorld.createRigidBody(frontRightDesc);
+    // const frontRightColliderDesc = RAPIER.ColliderDesc.cuboid(width / 4 - rightFrameOffset / 2, (height - 0.8) / 2, 0.01);
+    // rapierWorld.createCollider(frontRightColliderDesc, frontRightBody);
+    
+    // // Верхняя часть над дверью
+    // const frontTopDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(0, height - 0.4, depth / 2));
+    // const frontTopBody = rapierWorld.createRigidBody(frontTopDesc);
+    // const frontTopColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.4, 0.01);
+    // rapierWorld.createCollider(frontTopColliderDesc, frontTopBody);
+}
+
+function createPhysicsStove() {
+    if (!rapierWorld) return;
+    
+    // Основание печи (коробка)
+    const stoveBaseDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 0.45, -2));
+    const stoveBaseBody = rapierWorld.createRigidBody(stoveBaseDesc);
+    const stoveBaseColliderDesc = RAPIER.ColliderDesc.cuboid(0.4, 0.45, 0.3)
+        .setRestitution(0.1) // Небольшая упругость
+        .setFriction(0.7);
+    rapierWorld.createCollider(stoveBaseColliderDesc, stoveBaseBody);
+    
+    // Контейнер для камней (цилиндр — аппроксимируем кубом)
+    const stonesContainerDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 1.1, -2));
+    const stonesContainerBody = rapierWorld.createRigidBody(stonesContainerDesc);
+    const stonesContainerColliderDesc = RAPIER.ColliderDesc.cuboid(0.35, 0.2, 0.35);
+    rapierWorld.createCollider(stonesContainerColliderDesc, stonesContainerBody);
+    
+    // Труба
+    const pipeDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 2.05, -2));
+    const pipeBody = rapierWorld.createRigidBody(pipeDesc);
+    const pipeColliderDesc = RAPIER.ColliderDesc.cuboid(0.12, 0.75, 0.12);
+    rapierWorld.createCollider(pipeColliderDesc, pipeBody);
+}
+
+function createPhysicsBenches() {
+    if (!rapierWorld) return;
+    
+    const benchMaterial = { friction: 0.8, restitution: 0.1 };
+
+    // Первая лавка
+    const bench1Desc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(0, 0.57, -1.8)
+        .setRotation({ x: 0, y: 0, z: 0, w: 1 })
+        .setLinearDamping(0.5)     // Сопротивление движению
+        .setAngularDamping(0.5);   // Сопротивление вращению
+    const bench1Body = rapierWorld.createRigidBody(bench1Desc);
+    const bench1Seat1ColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.04, 0.3)
+        .setTranslation(0, 0.03, 0.4)
+        .setMass(10.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+    rapierWorld.createCollider(bench1Seat1ColliderDesc, bench1Body);
+    const bench1LegPositions = [[-0.8, -0.27, 0.1], [-0.8, -0.27, 0.65], [0.8, -0.27, 0.1], [0.8, -0.27, 0.65]];
+    bench1LegPositions.forEach(pos => {
+        const legColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.3, 0.04)
+        .setTranslation(...pos)
+        .setMass(2.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+        rapierWorld.createCollider(legColliderDesc, bench1Body);
     });
+    const bench1BackColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.25, 0.025)
+        .setTranslation(0, 0.28, 0.075)
+        .setMass(10.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+    rapierWorld.createCollider(bench1BackColliderDesc, bench1Body);
+    const bench1Seat2ColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.04, 0.4)
+        .setTranslation(0, 0.53, -0.3)
+        .setMass(10.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+    rapierWorld.createCollider(bench1Seat2ColliderDesc, bench1Body);
+    const bench1SupportPositions = [[-0.8, -0.045, -0.65], [0.8, -0.045, -0.65]];
+    bench1SupportPositions.forEach(pos => {
+        const supportColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.525, 0.04)
+        .setTranslation(...pos)
+        .setMass(2.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+        rapierWorld.createCollider(supportColliderDesc, bench1Body);
+    });
+    const bench1Group = uninitializedDynamicBodies.get('bench1');
+    dynamicBodies.set(bench1Group.uuid, {
+        mesh: bench1Group,
+        body: bench1Body
+    });
+    
+    bench1Group.userData.physicsBody = bench1Body;
+    bench1Group.userData.isDynamic = true;
+    uninitializedDynamicBodies.delete('bench1');
 
-    // Начальное облако пара
-    for (let i = 0; i < 25; i++) {
-        createSteamParticle(steamMaterial);
-    }
+    // === Левая лавка ===
+    const leftBenchDesc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(-2.6, 0.32, -0.5)
+        .setRotation({ x: 0, y: 0, z: 0, w: 1 })
+        .setLinearDamping(0.5)     // Сопротивление движению
+        .setAngularDamping(0.5);   // Сопротивление вращению
+    const leftBenchBody = rapierWorld.createRigidBody(leftBenchDesc);
+    const leftBenchColliderDesc = RAPIER.ColliderDesc.cuboid(0.3, 0.04, 1.0)
+        .setTranslation(0, 0.28, 0)
+        .setMass(10.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+    rapierWorld.createCollider(leftBenchColliderDesc, leftBenchBody);
+    const leftLegPositions = [
+        [-0.25, -0.02, -0.8], [-0.25, -0.02, 0.8], 
+        [0.25, -0.02, -0.8], [0.25, -0.02, 0.8]
+    ];
+    leftLegPositions.forEach(pos => {
+        const leftLegColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.3, 0.04)
+        .setTranslation(...pos)
+        .setMass(2.0) // Масса в кг
+        .setFriction(benchMaterial.friction)
+        .setRestitution(benchMaterial.restitution);
+        rapierWorld.createCollider(leftLegColliderDesc, leftBenchBody);
+    });
+    const leftBenchGroup = uninitializedDynamicBodies.get('leftBench');
+    dynamicBodies.set(leftBenchGroup.uuid, {
+        mesh: leftBenchGroup,
+        body: leftBenchBody
+    });
+    
+    leftBenchGroup.userData.physicsBody = leftBenchBody;
+    leftBenchGroup.userData.isDynamic = true;
+    uninitializedDynamicBodies.delete('leftBench');
 }
 
-function createSteamParticle(material) {
-    const size = 0.2 + Math.random() * 0.2;
-    const geometry = new THREE.CircleGeometry(size, 12);
-    const steam = new THREE.Mesh(geometry, material.clone());
+// Создание всех статических коллизий
+function createAllStaticColliders() {
+    createPhysicsWalls();
+    // createPhysicsStove();
+    createPhysicsBenches();
+}
+
+// function createPlayerPhysics() {
+//     if (!rapierWorld) return;
     
-    steam.position.set(
-        -2.3 + (Math.random() - 0.5) * 0.5,
-        1.3 + Math.random() * 0.3,
-        -2 + (Math.random() - 0.5) * 0.5
-    );
+//     // Игрок как динамическое тело (капсула аппроксимируется цилиндром + сферы, или просто капсула)
+//     // Для простоты используем шар с немного приплюснутой формой
     
-    steam.rotation.set(
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
-        Math.random() * Math.PI
-    );
+//     const playerHeight = 1.7;
+//     const playerRadius = 0.3; // Радиус столкновений игрока
     
-    steam.userData = {
-        velocity: new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3,
-            0.3 + Math.random() * 0.3,
-            (Math.random() - 0.5) * 0.3
-        ),
-        life: 0,
-        maxLife: 3 + Math.random() * 2
-    };
+//     // Жёсткое тело игрока (кинематическое, управляемое напрямую)
+//     const playerDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+//         .setTranslation(camera.position.x, camera.position.y - playerHeight / 2, camera.position.z);
     
-    scene.add(steam);
+//     playerBody = rapierWorld.createRigidBody(playerDesc);
+    
+//     // Капсула не поддерживается напрямую в некоторых версиях, используем цилиндр
+//     // Ось Y — вертикальная для цилиндра
+//     const playerColliderDesc = RAPIER.ColliderDesc.capsule(playerHeight / 2 - playerRadius, playerRadius)
+//         .setFriction(0.0)      // Без трения при движении (мы управляем сами)
+//         .setRestitution(0.0);  // Без упругости
+    
+//     // Альтернативно, если капсула не поддерживается:
+//     // const playerColliderDesc = RAPIER.ColliderDesc.ball(playerRadius);
+    
+//     playerCollider = rapierWorld.createCollider(playerColliderDesc, playerBody);
+    
+//     console.log('Player physics created');
+// }
+
+function createPlayerPhysics() {
+    if (!rapierWorld) return;
+    
+    // const RAPIER = window.RAPIER;
+    
+    // === Игрок — DYNAMIC rigid body ===
+    // Это позволяет телу сталкиваться со стенами и препятствиями
+    const playerDesc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(camera.position.x, camera.position.y - 0.85, camera.position.z)
+        .setLinvel(0, 0, 0)
+        .lockRotations();  // Запрещаем вращение тела — оно всегда вертикально
+    
+    playerBody = rapierWorld.createRigidBody(playerDesc);
+    
+    // Капсула для игрока
+    const playerRadius = 0.3;
+    const playerHeight = 1.7;
+    
+    const playerColliderDesc = RAPIER.ColliderDesc.capsule(
+        playerHeight / 2 - playerRadius,  // half-height цилиндра (без полусфер)
+        playerRadius
+    )
+        .setFriction(0.0)        // Без трения при скольжении
+        .setRestitution(0.0);    // Без упругости
+    
+    playerCollider = rapierWorld.createCollider(playerColliderDesc, playerBody);
+    
+    console.log('Player physics created (dynamic body with locked rotations)');
 }
 
 function addLogValue(log_div, row_title) {
@@ -1096,6 +1621,9 @@ function setupControls() {
             case 'KeyZ':
                 objectSelector.toggleVerticalRotation();
                 break;
+            case 'KeyB':
+                objectSelector.log_object_parameters();
+                break;
         }
     });
 
@@ -1137,7 +1665,119 @@ function animate(time) {
     timer.update(time);
     const delta = timer.getDelta();
 
-    if (isLocked) {
+    // === Установка скорости игрока на основе ввода ===
+    if (playerBody) {
+        // Вычисляем направление движения на основе ввода
+        direction.z = Number(moveForward) - Number(moveBackward);
+        direction.x = Number(moveRight) - Number(moveLeft);
+        direction.normalize();
+        
+        // Параметры движения
+        // const acceleration = 20.0;
+        const maxSpeed = 3.0;      // Максимальная скорость движения
+        const deceleration = 15.0; // Замедление при отсутствии ввода
+        
+        if (!playerBody.isValid) {
+            console.log('player body does not have isValid')
+        } else if (!playerBody.isValid()) {
+            console.log('player body is not valid')
+        }
+        // Текущая скорость
+        const currentLinvel = playerBody.linvel();
+        
+        // Вектор "вперёд" относительно направления взгляда камеры
+        const cameraDirection = new THREE.Vector3();
+        camera.getWorldDirection(cameraDirection);
+        cameraDirection.y = 0;  // Движение строго в плоскости XZ
+        cameraDirection.normalize();
+        
+        // Вектор "вправо" относительно камеры
+        const cameraRight = new THREE.Vector3();
+        cameraRight.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0));
+        cameraRight.normalize();
+        
+        // Желаемая скорость
+        const desiredVelocity = {
+            x: 0,
+            y: currentLinvel.y, // Сохраняем вертикальную скорость (гравитацию)
+            z: 0
+        };
+        
+        // Применяем ускорение
+        // const speed = acceleration * delta;
+        
+        if (moveForward || moveBackward) {
+            desiredVelocity.x += cameraDirection.x * velocity.z;
+            desiredVelocity.z += cameraDirection.z * velocity.z;
+        } else {
+            // Плавное замедление при отпускании клавиш
+            velocity.z *= Math.max(0, 1 - deceleration * delta);
+            if (Math.abs(velocity.z) < 0.01) velocity.z = 0;
+        }
+        
+        if (moveLeft || moveRight) {
+            desiredVelocity.x += cameraRight.x * velocity.x;
+            desiredVelocity.z += cameraRight.z * velocity.x;
+        } else {
+            velocity.x *= Math.max(0, 1 - deceleration * delta);
+            if (Math.abs(velocity.x) < 0.01) velocity.x = 0;
+        }
+        
+        // Ограничиваем максимальную скорость
+        const speed2D = Math.sqrt(currentLinvel.x ** 2 + currentLinvel.z ** 2);
+        if (speed2D > maxSpeed) {
+            const scale = maxSpeed / speed2D;
+            desiredVelocity.x = currentLinvel.x * scale;
+            desiredVelocity.z = currentLinvel.z * scale;
+        }
+        
+        // Обновляем скорость на основе ввода
+        let targetVelocityX = 0;
+        let targetVelocityZ = 0;
+        
+        if (moveForward || moveBackward) {
+            targetVelocityX += cameraDirection.x * direction.z * maxSpeed;
+            targetVelocityZ += cameraDirection.z * direction.z * maxSpeed;
+        }
+        
+        if (moveLeft || moveRight) {
+            targetVelocityX += cameraRight.x * direction.x * maxSpeed;
+            targetVelocityZ += cameraRight.z * direction.x * maxSpeed;
+        }
+        
+        // Плавная интерполяция скорости (чтобы не было рывков)
+        const interpolationFactor = 0.15; // Меньше = плавнее, но медленнее реакция
+        desiredVelocity.x = currentLinvel.x + (targetVelocityX - currentLinvel.x) * interpolationFactor;
+        desiredVelocity.z = currentLinvel.z + (targetVelocityZ - currentLinvel.z) * interpolationFactor;
+        
+        // Устанавливаем скорость тела
+        playerBody.setLinvel(desiredVelocity, true);
+    }
+    // === Шаг физики Rapier ===
+    if (rapierWorld) {
+        rapierWorld.timestep = Math.min(delta, 0.1);
+        rapierWorld.step();
+        if (rapierDebugRenderer) rapierDebugRenderer.update();
+    }
+    // === Синхронизация камеры с физическим телом ===
+    if (playerBody) {
+        const position = playerBody.translation();
+        
+        // Камера находится на высоте глаз игрока
+        camera.position.set(position.x, position.y + 0.85, position.z);
+        
+        // Ограничение по высоте (если игрок "вылетел" за пределы):
+        if (camera.position.y > 2.5) {
+            camera.position.y = 1.7;
+            const correctedPos = { x: position.x, y: 0.85, z: position.z };
+            playerBody.setTranslation(correctedPos, true);
+        }
+        if (camera.position.y < 0.5) {
+            camera.position.y = 1.7;
+        }
+    }
+
+    if (!playerBody && !rapierWorld && isLocked) {
         // Движение
 
         // Замедление
@@ -1196,39 +1836,28 @@ function animate(time) {
             setLogValue('camera.position.z', camera.position.z);
         }
         
-        objectSelector.update(delta);
     }
 
-    // Анимация пара
-    scene.children.forEach(child => {
-        if (child.userData && child.userData.velocity) {
-            child.position.add(child.userData.velocity.clone().multiplyScalar(delta));
-            child.userData.life += delta;
+    if (isLocked) objectSelector.update(delta);
+
+    // === Синхронизация динамических объектов ===
+    dynamicBodies.forEach((data, uuid) => {
+        const { mesh, body } = data;
+        
+        if (body.bodyType() === RAPIER.RigidBodyType.Dynamic && (!objectSelector.pickedUp || objectSelector.pickedUp && objectSelector.selected?.uuid != mesh.uuid)) {
+            // Объект под физикой и не поднят игроком
+            const position = body.translation();
+            const rotation = body.rotation();
             
-            // Затухание
-            child.material.opacity = 0.15 * (1 - child.userData.life / child.userData.maxLife);
-            
-            // Растягивание пара
-            child.scale.setScalar(1 + child.userData.life * 0.3);
-            
-            // Удаление старого пара и создание нового
-            if (child.userData.life > child.userData.maxLife) {
-                child.position.set(
-                    -2.3 + (Math.random() - 0.5) * 0.5,
-                    1.3 + Math.random() * 0.3,
-                    -2 + (Math.random() - 0.5) * 0.5
-                );
-                child.userData.life = 0;
-                child.userData.velocity.set(
-                    (Math.random() - 0.5) * 0.3,
-                    0.3 + Math.random() * 0.3,
-                    (Math.random() - 0.5) * 0.3
-                );
-                child.material.opacity = 0.15;
-                child.scale.setScalar(1);
-            }
+            mesh.position.set(position.x, position.y, position.z);
+            mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+        } else if (objectSelector.pickedUp && objectSelector.selected?.uuid == mesh.uuid) {
+            body.setTranslation({...mesh.position});
+            body.setRotation({w: mesh.quaternion._w, x: mesh.quaternion._x, y: mesh.quaternion._y, z: mesh.quaternion._z});
         }
     });
+
+    animateSteam(delta);
 
     // Лёгкое мерцание света от печи
     const stoveLights = scene.children.filter(c => c.type === 'PointLight' && c.position.x === -2.3);
@@ -1243,4 +1872,4 @@ function animate(time) {
 }
 
 // Запуск
-init();
+await init();
