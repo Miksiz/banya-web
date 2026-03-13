@@ -4,10 +4,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import RAPIER from '@dimforge/rapier3d-compat';
+import bucketModel from "../assets/woodenbucketa.glb";
 
 // Основные переменные
-let camera, scene, renderer, composer, outlinePass;
+let camera, scene, renderer, composer, outlinePass, RAPIER;
 let steamParticles = [];
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
 let velocity = new THREE.Vector3();
@@ -41,7 +41,7 @@ let touchActivity = {
 }
 
 async function initRapier() {
-    await RAPIER.init();
+    RAPIER = await import('@dimforge/rapier3d');
     
     // Создаём физический мир с гравитацией
     const gravity = { x: 0.0, y: -9.81, z: 0.0 };
@@ -1022,7 +1022,7 @@ function createBench() {
 // Создание аксессуаров
 function createAccessories() {
     // Ведро
-    loadGLBModel('assets/woodenbucketa.glb', new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
+    loadGLBModel(bucketModel, new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
         const bucketGroup = new THREE.Group();
         const tmpGroup = new THREE.Group();
         // Задаем параметр interactionObject для Mesh, которая выбирается при наведении
