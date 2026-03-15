@@ -1,16 +1,14 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import Scene from './systems/Scene.js'
 import Bucket from './entities/Bucket.js';
 import Bench from './entities/Bench.js';
 import Bench2 from './entities/Bench2.js';
 
 import { wood as createWoodTexture, mesh as createMeshTexture } from './utils/textures.js';
+import Physics from './systems/Physics.js';
 
 // Основные переменные
-let camera, scene, renderer, composer, outlinePass, RAPIER;
+let camera, scene, sceneObj, outlinePass, RAPIER, physics;
 let steamParticles = [];
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
 let velocity = new THREE.Vector3();
@@ -25,11 +23,8 @@ timer.connect(document);
 const enableLog = false;
 let log_values = new Map();
 
-let rapierWorld = null;
 let playerBody = null;
 const dynamicBodies = new Map(); // Связь Three.js объектов с их физическими телами
-let rapierInitialized = false;
-let rapierDebugRenderer
 
 
 let touchActivity = {
@@ -37,21 +32,6 @@ let touchActivity = {
     touchId: undefined,
     x: undefined,
     y: undefined,
-}
-
-async function initRapier() {
-    RAPIER = await import('@dimforge/rapier3d');
-    
-    // Создаём физический мир с гравитацией
-    const gravity = { x: 0.0, y: -9.81, z: 0.0 };
-    rapierWorld = new RAPIER.World(gravity);
-    
-    console.log('Rapier physics initialized');
-    return {RAPIER, rapierWorld};
-}
-// Вспомогательная функция создания вектора Rapier
-function rapierVec(x, y, z) {
-    return { x, y, z };
 }
 
 // Класс для выбора объекта 
@@ -77,6 +57,7 @@ class ObjectSelector {
     this.objectHoldDistance = this.objectHoldDefaultDistance;
     this.objectRotation = undefined;
 
+    this.physics = null;
   }
   getLookedAtObject(normalizedPosition = {x: 0, y: 0}) {
     camera.updateMatrixWorld();
@@ -85,7 +66,16 @@ class ObjectSelector {
     // Возвращаем пустое значение, если не было объектов
     if (!intersectedObjects.length) return undefined;
     // Первый ближайший объект, если есть пересечения
-    const intersectedObject = intersectedObjects[0].object;
+    let i = 0;
+    let intersectedObject = undefined
+    while (i < intersectedObjects.length) {
+        if (intersectedObjects[i].object?.intersectable ?? true) {
+            intersectedObject = intersectedObjects[i].object;
+            break;
+        }
+        i += 1;
+    }
+    if (!intersectedObject) return undefined;
     // Взаимодействие не всегда с тем, с которым произошло пересечение, поэтому проходим по interactionObject атрибуту пока он указан до родителя
     // Необходимо для правильного выбора объекта в случае загруженных из gltf файлов (при загрузке для каждого указать это свойство правильно)
     let interactionObject = intersectedObject;
@@ -121,12 +111,12 @@ class ObjectSelector {
 
     // console.log('picked up', this.selected.uuid);
     // === Отключаем физику при подборе ===
-    const physicsData = dynamicBodies.get(this.selected.uuid);
-    if (physicsData) {
+    const physicsBody = this.selected.userData?.physicsBody;
+    if (physicsBody) {
         // Переключаем в кинематический режим для управления вручную
-        physicsData.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-        physicsData.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        physicsData.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        physicsBody.setBodyType(this.physics.RAPIER.RigidBodyType.KinematicPositionBased, true);
+        physicsBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        physicsBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
         // console.log('disabled physics', this.selected.uuid);
     }
 
@@ -169,10 +159,10 @@ class ObjectSelector {
     if (!this.selected) return;
     this.pickedUp = false;
     // === Включаем физику при отпускании ===
-    const physicsData = dynamicBodies.get(this.selected.uuid);
-    if (physicsData) {
+    const physicsBody = this.selected.userData?.physicsBody;
+    if (physicsBody) {
         // Возвращаем динамический режим
-        physicsData.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        physicsBody.setBodyType(this.physics.RAPIER.RigidBodyType.Dynamic, true);
         // console.log('restored physics')
     }
 
@@ -311,78 +301,36 @@ class ObjectSelector {
 
 const objectSelector = new ObjectSelector();
 
-class RapierDebugRenderer {
-  mesh
-  world
-  enabled = true
-
-  constructor(scene, world) {
-    this.world = world
-    this.mesh = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, vertexColors: true }))
-    this.mesh.frustumCulled = false
-    scene.add(this.mesh)
-  }
-
-  update() {
-    if (this.enabled) {
-      const { vertices, colors } = this.world.debugRender()
-      this.mesh.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3))
-      this.mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
-      this.mesh.visible = true
-    } else {
-      this.mesh.visible = false
-    }
-  }
-}
-
 // Инициализация сцены
 async function init() {
     // === Сначала инициализируем Rapier ===
-    const rapierPromise = initRapier().catch(e => console.error('Ошибка инициализации Rapier:', error));
-    var rapierInit = [];
+    physics = new Physics()
+    physics.afterInitialization((physics) => {
+        objectSelector.physics = physics
+    })
 
-
+    sceneObj = new Scene()
     // Сцена
-    scene = new THREE.Scene();
+    scene = sceneObj.scene;
     scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
     scene.background = new THREE.Color(0x966b4b);
 
     // Камера (вид от первого лица)
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera = sceneObj.camera;
     camera.position.set(0, 1.7, 0);
 
-    // Рендерер
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.shadowMap.enabled = true;
-    // renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.8;
-    document.body.appendChild(renderer.domElement);
-    
-    composer = new EffectComposer( renderer );
-    const renderPass = new RenderPass( scene, camera );
-    composer.addPass( renderPass );
-    outlinePass = new OutlinePass(new THREE.Vector2(window.innerWidth, window.innerHeight), scene, camera);
-    composer.addPass( outlinePass );
-    const outputPass = new OutputPass()
-    composer.addPass( outputPass );
+    outlinePass = sceneObj.outlinePass;
 
 
     // Создание парилки
-    rapierInit.push(createSauna(rapierPromise));
+    createSauna(physics);
     createStove();
-    rapierInit.push(createBench(rapierPromise));
+    createBench(physics);
 
     // === Создаём физические коллизии для статических объектов ===
-    rapierInit.push(rapierPromise.then(({RAPIER, rapierWorld}) => {
-        createPlayerPhysics(RAPIER, rapierWorld);
-        // rapierDebugRenderer = new RapierDebugRenderer(scene, rapierWorld)
-    }))
+    physics.afterInitialization(createPlayerPhysics);
 
-    rapierInit.push(createAccessories(rapierPromise));
+    createAccessories(physics);
     createLighting();
 
     if (enableLog) createLog();
@@ -390,17 +338,15 @@ async function init() {
     // События управления
     setupControls();
 
-    // Обработка изменения размера окна
-    window.addEventListener('resize', onWindowResize);
 
-    // await Promise.allSettled(rapierInit);
+    await physics.init();
 
-    animate();
+    requestAnimationFrame(animate);
 }
 
 
 // Создание парилки
-function createSauna(rapierPromise) {
+function createSauna(physics) {
     const wallTexture = createWoodTexture('#8B4513');
     const ceilingTexture = createWoodTexture('#a0522d');
     const floorTexture = createWoodTexture('#5a3520');
@@ -574,9 +520,7 @@ function createSauna(rapierPromise) {
     handle.receiveShadow = true;
     scene.add(handle);
 
-    return rapierPromise.then(({RAPIER, rapierWorld}) => {
-        createPhysicsWalls(RAPIER, rapierWorld);
-    })
+    return physics.afterInitialization(createPhysicsWalls);
 }
 
 // Создание пара
@@ -776,57 +720,29 @@ function createStove() {
 }
 
 // Создание лавок
-function createBench(rapierPromise) {
-    const bench1 = new Bench2(
+function createBench(physics) {
+    new Bench2(
         scene,
-        rapierPromise,
+        physics,
         new THREE.Vector3(0, 0.6, -1.75),
         new THREE.Euler(0, Math.PI, 0)
     )
-
-    const bench1RapierInit = bench1.physicsPromise.then(() => {
-        dynamicBodies.set(bench1.mesh.uuid, {
-            mesh: bench1.mesh,
-            body: bench1.physicsBody
-        });
-    }, (err) => {
-        console.log('bench1 physics promise rejected', err);
-    });
-
-    const leftBench = new Bench(
+    new Bench(
         scene,
-        rapierPromise,
+        physics,
         new THREE.Vector3(-2.6, 0.56, -0.2),
         new THREE.Euler(0, Math.PI/2, 0)
     )
-
-    const leftBenchRapierInit = leftBench.physicsPromise.then(() => {
-        dynamicBodies.set(leftBench.mesh.uuid, {
-            mesh: leftBench.mesh,
-            body: leftBench.physicsBody
-        });
-    }, (err) => {
-        console.log('Left Bench physics promise rejected', err);
-    });
-
-    return Promise.allSettled([bench1RapierInit, leftBenchRapierInit])
 }
 
 // Создание аксессуаров
-function createAccessories(rapierPromise) {
-    const bucket = new Bucket(
+function createAccessories(physics) {
+    new Bucket(
         scene,
-        rapierPromise,
+        physics,
         new THREE.Vector3(-1.24, 0.32, -2.15),
         new THREE.Euler(0, Math.PI * 1.2,0)
     )
-
-    const bucketPromise = bucket.physicsPromise.then(() => {
-        dynamicBodies.set(bucket.mesh.uuid, {
-            mesh: bucket.mesh,
-            body: bucket.physicsBody
-        });
-    })
 
     // Часы на стене
     const clockGroup = new THREE.Group();
@@ -881,7 +797,6 @@ function createAccessories(rapierPromise) {
     thermometerGroup.add(mercury);
 
     scene.add(thermometerGroup);
-    return bucketPromise;
 }
 
 // Создание освещения
@@ -899,7 +814,9 @@ function createLighting() {
 }
 
 
-function createPhysicsWalls(RAPIER, rapierWorld) {
+function createPhysicsWalls(physics) {
+    const RAPIER = physics.RAPIER;
+    const rapierWorld = physics.world;
     // Размеры парилки (из createSauna)
     const width = 6;
     const height = 3;
@@ -970,122 +887,12 @@ function createPhysicsWalls(RAPIER, rapierWorld) {
     // rapierWorld.createCollider(frontTopColliderDesc, frontTopBody);
 }
 
-function createPhysicsStove(RAPIER, rapierWorld) {
-    // Основание печи (коробка)
-    const stoveBaseDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 0.45, -2));
-    const stoveBaseBody = rapierWorld.createRigidBody(stoveBaseDesc);
-    const stoveBaseColliderDesc = RAPIER.ColliderDesc.cuboid(0.4, 0.45, 0.3)
-        .setRestitution(0.1) // Небольшая упругость
-        .setFriction(0.7);
-    rapierWorld.createCollider(stoveBaseColliderDesc, stoveBaseBody);
-    
-    // Контейнер для камней (цилиндр — аппроксимируем кубом)
-    const stonesContainerDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 1.1, -2));
-    const stonesContainerBody = rapierWorld.createRigidBody(stonesContainerDesc);
-    const stonesContainerColliderDesc = RAPIER.ColliderDesc.cuboid(0.35, 0.2, 0.35);
-    rapierWorld.createCollider(stonesContainerColliderDesc, stonesContainerBody);
-    
-    // Труба
-    const pipeDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 2.05, -2));
-    const pipeBody = rapierWorld.createRigidBody(pipeDesc);
-    const pipeColliderDesc = RAPIER.ColliderDesc.cuboid(0.12, 0.75, 0.12);
-    rapierWorld.createCollider(pipeColliderDesc, pipeBody);
-}
-
-function createBench1Physics(RAPIER, rapierWorld, bench1Group) {
-    const benchMaterial = { friction: 0.8, restitution: 0.1 };
-
-    // Первая лавка
-    const bench1Desc = RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(0, 0.57, -1.8)
-        .setRotation({ x: 0, y: 0, z: 0, w: 1 })
-        .setLinearDamping(0.5)     // Сопротивление движению
-        .setAngularDamping(0.5);   // Сопротивление вращению
-    const bench1Body = rapierWorld.createRigidBody(bench1Desc);
-    const bench1Seat1ColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.04, 0.3)
-        .setTranslation(0, 0.03, 0.4)
-        .setMass(10.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-    rapierWorld.createCollider(bench1Seat1ColliderDesc, bench1Body);
-    const bench1LegPositions = [[-0.8, -0.27, 0.1], [-0.8, -0.27, 0.65], [0.8, -0.27, 0.1], [0.8, -0.27, 0.65]];
-    bench1LegPositions.forEach(pos => {
-        const legColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.3, 0.04)
-        .setTranslation(...pos)
-        .setMass(2.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-        rapierWorld.createCollider(legColliderDesc, bench1Body);
-    });
-    const bench1BackColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.25, 0.025)
-        .setTranslation(0, 0.28, 0.075)
-        .setMass(10.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-    rapierWorld.createCollider(bench1BackColliderDesc, bench1Body);
-    const bench1Seat2ColliderDesc = RAPIER.ColliderDesc.cuboid(0.9, 0.04, 0.4)
-        .setTranslation(0, 0.53, -0.3)
-        .setMass(10.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-    rapierWorld.createCollider(bench1Seat2ColliderDesc, bench1Body);
-    const bench1SupportPositions = [[-0.8, -0.045, -0.65], [0.8, -0.045, -0.65]];
-    bench1SupportPositions.forEach(pos => {
-        const supportColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.525, 0.04)
-        .setTranslation(...pos)
-        .setMass(2.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-        rapierWorld.createCollider(supportColliderDesc, bench1Body);
-    });
-    dynamicBodies.set(bench1Group.uuid, {
-        mesh: bench1Group,
-        body: bench1Body
-    });
-    
-    bench1Group.userData.physicsBody = bench1Body;
-    bench1Group.userData.isDynamic = true;
-}
-
-function createLeftBenchPhysics(RAPIER, rapierWorld, leftBenchGroup) {
-    const benchMaterial = { friction: 0.8, restitution: 0.1 };
-    // === Левая лавка ===
-    const leftBenchDesc = RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(-2.6, 0.32, -0.5)
-        .setRotation({ x: 0, y: 0, z: 0, w: 1 })
-        .setLinearDamping(0.5)     // Сопротивление движению
-        .setAngularDamping(0.5);   // Сопротивление вращению
-    const leftBenchBody = rapierWorld.createRigidBody(leftBenchDesc);
-    const leftBenchColliderDesc = RAPIER.ColliderDesc.cuboid(0.3, 0.04, 1.0)
-        .setTranslation(0, 0.28, 0)
-        .setMass(10.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-    rapierWorld.createCollider(leftBenchColliderDesc, leftBenchBody);
-    const leftLegPositions = [
-        [-0.25, -0.02, -0.8], [-0.25, -0.02, 0.8], 
-        [0.25, -0.02, -0.8], [0.25, -0.02, 0.8]
-    ];
-    leftLegPositions.forEach(pos => {
-        const leftLegColliderDesc = RAPIER.ColliderDesc.cuboid(0.04, 0.3, 0.04)
-        .setTranslation(...pos)
-        .setMass(2.0) // Масса в кг
-        .setFriction(benchMaterial.friction)
-        .setRestitution(benchMaterial.restitution);
-        rapierWorld.createCollider(leftLegColliderDesc, leftBenchBody);
-    });
-    dynamicBodies.set(leftBenchGroup.uuid, {
-        mesh: leftBenchGroup,
-        body: leftBenchBody
-    });
-    
-    leftBenchGroup.userData.physicsBody = leftBenchBody;
-    leftBenchGroup.userData.isDynamic = true;
-}
 
 
-function createPlayerPhysics(RAPIER, rapierWorld) {
+function createPlayerPhysics(physics) {
     // === Игрок — DYNAMIC rigid body ===
+    const RAPIER = physics.RAPIER;
+    const rapierWorld = physics.world;
     // Это позволяет телу сталкиваться со стенами и препятствиями
     const playerDesc = RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(camera.position.x, camera.position.y - 0.85, camera.position.z)
@@ -1307,6 +1114,12 @@ function setupControls() {
             case 'KeyB':
                 objectSelector.log_object_parameters();
                 break;
+            case 'KeyN':
+                try {
+                    physics.toggleDebug(scene);
+
+                } catch (e) {console.log(e)}
+                break;
         }
     });
 
@@ -1333,12 +1146,6 @@ function setupControls() {
             //     break;
         }
     });
-}
-
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 // Анимация
@@ -1436,12 +1243,12 @@ function animate(time) {
         // Устанавливаем скорость тела
         playerBody.setLinvel(desiredVelocity, true);
     }
+    if (objectSelector.pickedUp) physics.updateBodyFromThree(objectSelector.selected);
+    physics.updateSceneFromPhysics();
+    physics.update(delta);
     // === Шаг физики Rapier ===
-    if (rapierWorld) {
-        rapierWorld.timestep = Math.min(delta, 0.1);
-        rapierWorld.step();
-        if (rapierDebugRenderer) rapierDebugRenderer.update();
-    }
+
+
     // === Синхронизация камеры с физическим телом ===
     if (playerBody) {
         const position = playerBody.translation();
@@ -1462,23 +1269,11 @@ function animate(time) {
 
     if (isLocked) objectSelector.update(delta);
 
-    // === Синхронизация динамических объектов ===
-    dynamicBodies.forEach((data, uuid) => {
-        const { mesh, body } = data;
-        
 
-        if (body.bodyType() === RAPIER.RigidBodyType.Dynamic && (!objectSelector.pickedUp || objectSelector.pickedUp && objectSelector.selected?.uuid != mesh.uuid)) {
-            // Объект под физикой и не поднят игроком
-            const position = body.translation();
-            const rotation = body.rotation();
-            
-            mesh.position.set(position.x, position.y, position.z);
-            mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-        } else if (objectSelector.pickedUp && objectSelector.selected?.uuid == mesh.uuid) {
-            body.setTranslation({...mesh.position});
-            body.setRotation({w: mesh.quaternion._w, x: mesh.quaternion._x, y: mesh.quaternion._y, z: mesh.quaternion._z});
-        }
-    });
+    // === Синхронизация динамических объектов ===
+    
+    
+
 
     animateSteam(delta);
 
@@ -1490,8 +1285,7 @@ function animate(time) {
         }
     });
 
-    // renderer.render(scene, camera);
-    composer.render();
+    sceneObj.render();
 }
 
 // Запуск

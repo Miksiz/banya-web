@@ -3,20 +3,19 @@ import * as THREE from 'three';
 export default class Entity {
     mesh
     physicsBody
-    physicsPromise
-    physicsMeshes
     friction = 0.8 // Сила трения объекта
     restitution = 0.1 // Упругость объекта
 
     constructor(
         scene,
-        rapierPromise,
+        physics,
         position = new THREE.Vector3(0, 0, 0),
         rotation = new THREE.Euler(0, 0, 0),
         scale = 1
     ) {
         if (this.initialize) this.initialize();
-        const meshPromise = this.createMesh().then(mesh => {
+        // const meshPromise = this.createMesh().then(mesh => {
+        this.createMesh().then(mesh => {
             this.mesh = mesh;
             this.mesh.position.copy(position);
             this.mesh.setRotationFromEuler(rotation);
@@ -24,39 +23,42 @@ export default class Entity {
             this.mesh.updateMatrix();
             this.mesh.updateMatrixWorld(true);
             scene.add(this.mesh);
+            physics.afterInitialization(this.createPhysics.bind(this))
         })
-        this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
+        // this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
     }
 
     async createMesh() {
         throw new Error("Method 'createMesh()' must be implemented.");
     }
     
-    createPhysics(RAPIER, rapierWorld) {
+    createPhysics(physics) {
         // Вычисляем bounding box для точных размеров
         const bbox = new THREE.Box3().setFromObject(this.mesh);
         var size = bbox.getSize(new THREE.Vector3());
 
         const worldPosition = this.mesh.getWorldPosition(new THREE.Vector3());
         const worldQuaternion = this.mesh.getWorldQuaternion(new THREE.Quaternion());
+
         // Создаём динамическое rigid body
-        const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+        const bodyDesc = physics.RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(worldPosition.x, worldPosition.y, worldPosition.z)
             .setRotation({ w: worldQuaternion.w, x: worldQuaternion.x, y: worldQuaternion.y, z: worldQuaternion.z })
             .setLinearDamping(0.5)     // Сопротивление движению
             .setAngularDamping(0.5);   // Сопротивление вращению
 
-        this.physicsBody = rapierWorld.createRigidBody(bodyDesc);
+        this.physicsBody = physics.world.createRigidBody(bodyDesc);
+        this.physicsBody.userData = { mesh: this.mesh };
 
         this.mesh.traverse((child) => {
             if (child.isMesh) {
                 size = this.computeCuboidDimensions(child);
-                const childColliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
+                const childColliderDesc = physics.RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
                     .setTranslation(child.position.x, child.position.y, child.position.z)
                     .setRotation({ w: child.quaternion.w, x: child.quaternion.x, y: child.quaternion.y, z: child.quaternion.z })
                     .setFriction(this.friction)         // Трение дерева
                     .setRestitution(this.restitution);     // Небольшая упругость
-                rapierWorld.createCollider(childColliderDesc, this.physicsBody);
+                physics.world.createCollider(childColliderDesc, this.physicsBody);
             }
         });
 

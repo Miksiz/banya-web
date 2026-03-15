@@ -49,7 +49,7 @@ export default class Bucket extends Entity {
         return bucketGroup;
     }
 
-    createPhysics(RAPIER, rapierWorld) {
+    createPhysics(physics) {
         // === Добавляем физику для ведра ===
         // Вычисляем bounding box для точных размеров
         const bbox = new THREE.Box3().setFromObject(this.mesh);
@@ -57,23 +57,24 @@ export default class Bucket extends Entity {
         bbox.getSize(size);
 
         // Создаём динамическое rigid body
-        const bucketDesc = RAPIER.RigidBodyDesc.dynamic()
+        const bucketDesc = physics.RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z)
             .setRotation({ w: this.mesh.quaternion._w, x: this.mesh.quaternion._x, y: this.mesh.quaternion._y, z: this.mesh.quaternion._z })
             .setLinearDamping(0.5)     // Сопротивление движению
             .setAngularDamping(0.5);   // Сопротивление вращению
 
-        const bucketBody = rapierWorld.createRigidBody(bucketDesc);
+        const bucketBody = physics.world.createRigidBody(bucketDesc);
         this.physicsBody = bucketBody;
+        bucketBody.userData = { mesh: this.mesh };
 
         // Создаём коллайдер (ящик вместо точной формы для производительности)
-        const bucketColliderDesc = RAPIER.ColliderDesc.cylinder(size.y * 0.9 / 2, size.x * 0.65 / 2)
-            .setTranslation(-0.02, -0.02, 0.02)
+        const bucketColliderDesc = physics.RAPIER.ColliderDesc.cylinder(size.y * 0.9 / 2, size.x * 0.65 / 2)
+            .setTranslation(0.025, -0.02, 0.0)
             .setMass(1.0 + 5*this.waterFillAmount) // Масса в кг
             .setFriction(0.6)         // Трение дерева
             .setRestitution(0.2);     // Небольшая упругость
 
-        rapierWorld.createCollider(bucketColliderDesc, bucketBody);
+        physics.world.createCollider(bucketColliderDesc, bucketBody);
 
         this.mesh.userData.physicsBody = bucketBody;
         this.mesh.userData.isDynamic = true;
