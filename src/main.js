@@ -1,10 +1,13 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import bucketModel from "../assets/woodenbucketa.glb";
+import Bucket from './entities/Bucket.js';
+import Bench from './entities/Bench.js';
+import Bench2 from './entities/Bench2.js';
+
+import { wood as createWoodTexture, mesh as createMeshTexture } from './utils/textures.js';
 
 // Основные переменные
 let camera, scene, renderer, composer, outlinePass, RAPIER;
@@ -24,14 +27,10 @@ let log_values = new Map();
 
 let rapierWorld = null;
 let playerBody = null;
-let playerCollider = null;
-const uninitializedDynamicBodies = new Map();
 const dynamicBodies = new Map(); // Связь Three.js объектов с их физическими телами
 let rapierInitialized = false;
 let rapierDebugRenderer
 
-// Создание загрузчика GLTF
-const gltfLoader = new GLTFLoader();
 
 let touchActivity = {
     inProgress: false,
@@ -48,7 +47,7 @@ async function initRapier() {
     rapierWorld = new RAPIER.World(gravity);
     
     console.log('Rapier physics initialized');
-    return true;
+    return {RAPIER, rapierWorld};
 }
 // Вспомогательная функция создания вектора Rapier
 function rapierVec(x, y, z) {
@@ -278,7 +277,6 @@ class ObjectSelector {
 
     this.selected.updateMatrixWorld();
     
-
     // Плавное перемещение
     if (this.selected.position.distanceTo(targetPosition) < 0.01) {
         this.selected.position.copy(targetPosition);
@@ -340,12 +338,8 @@ class RapierDebugRenderer {
 // Инициализация сцены
 async function init() {
     // === Сначала инициализируем Rapier ===
-    try {
-        rapierInitialized = await initRapier();
-    } catch (error) {
-        console.error('Ошибка инициализации Rapier:', error);
-        // Продолжаем без физики
-    }
+    const rapierPromise = initRapier().catch(e => console.error('Ошибка инициализации Rapier:', error));
+    var rapierInit = [];
 
 
     // Сцена
@@ -378,29 +372,17 @@ async function init() {
 
 
     // Создание парилки
-    createSauna();
+    rapierInit.push(createSauna(rapierPromise));
     createStove();
-    createBench();
+    rapierInit.push(createBench(rapierPromise));
 
     // === Создаём физические коллизии для статических объектов ===
-    if (rapierInitialized) {
-        createAllStaticColliders();
-        createPlayerPhysics();
-        // Установка начальной позиции игрока
-        if (playerBody) {
-            // Стартовая позиция — в центре парилки
-            const startPos = { x: 0, y: 0.85, z: 0 };
-            playerBody.setTranslation(startPos, true);
-            
-            // Начальная скорость ноль
-            playerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-            
-            console.log('Player spawned at', startPos);
-        }
+    rapierInit.push(rapierPromise.then(({RAPIER, rapierWorld}) => {
+        createPlayerPhysics(RAPIER, rapierWorld);
         // rapierDebugRenderer = new RapierDebugRenderer(scene, rapierWorld)
-    }
+    }))
 
-    createAccessories();
+    rapierInit.push(createAccessories(rapierPromise));
     createLighting();
 
     if (enableLog) createLog();
@@ -411,135 +393,14 @@ async function init() {
     // Обработка изменения размера окна
     window.addEventListener('resize', onWindowResize);
 
+    // await Promise.allSettled(rapierInit);
+
     animate();
 }
 
-function loadGLBModel(modelPath, position = new THREE.Vector3(0, 0, 0), 
-                      rotation = new THREE.Euler(0, 0, 0), 
-                      scale = new THREE.Vector3(1, 1, 1)) {
-    return new Promise((resolve, reject) => {
-        gltfLoader.load(
-            modelPath,
-            (gltf) => {
-                const model = gltf.scene;
-                
-                // Применяем трансформации
-                model.position.copy(position);
-                model.rotation.copy(rotation);
-                model.scale.copy(scale);
-                
-                // Включаем тени для всех меши в модели
-                model.traverse((child) => {
-                    if (child.isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                    }
-                });
-                
-                // Добавляем модель в сцену
-                scene.add(model);
-                
-                console.log(`Модель ${modelPath} успешно загружена`);
-                resolve(model);
-            },
-            // (progress) => {
-            //     // Прогресс загрузки
-            //     const percentLoaded = Math.round((progress.loaded / progress.total) * 100);
-            //     console.log(`Загрузка: ${percentLoaded}%`);
-            // },
-            undefined,
-            (error) => {
-                console.error(`Ошибка загрузки модели ${modelPath}:`, error);
-                reject(error);
-            }
-        );
-    });
-}
-
-// Создание текстуры дерева
-function createWoodTexture(baseColor, darken = 0) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-
-    // Базовый цвет
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(0, 0, 512, 512);
-
-    // Волокна дерева
-    for (let i = 0; i < 50; i++) {
-        ctx.strokeStyle = `rgba(${30 + Math.random() * 40}, ${15 + Math.random() * 30}, ${5}, ${0.1 + Math.random() * 0.15})`;
-        ctx.lineWidth = 1 + Math.random() * 2;
-        ctx.beginPath();
-        let y = Math.random() * 512;
-        ctx.moveTo(0, y);
-        for (let x = 0; x < 512; x += 20) {
-            y += (Math.random() - 0.5) * 4;
-            ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-    }
-
-    // Сучки
-    for (let i = 0; i < 5; i++) {
-        const x = Math.random() * 512;
-        const y = Math.random() * 512;
-        const r = 5 + Math.random() * 10;
-        ctx.fillStyle = `rgba(40, 20, 10, 0.3)`;
-        ctx.beginPath();
-        ctx.ellipse(x, y, r, r * 0.7, Math.random() * Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(2, 2);
-
-    return texture;
-}
-
-function createMeshTexture(baseColor, meshSize = 10) {
-    const canvas = document.createElement('canvas');
-    const textureSize = meshSize*10;
-    canvas.width = textureSize;
-    canvas.height = textureSize;
-    const ctx = canvas.getContext('2d');
-
-
-    ctx.strokeStyle = baseColor;
-    ctx.lineWidth = Math.max(1, meshSize/10);
-    for (let y = 0; y < textureSize; y += meshSize) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(textureSize-y-1, textureSize-1);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(textureSize-1, y);
-        ctx.lineTo(y-1, textureSize-1);
-        ctx.stroke();
-    }
-    for (let x = meshSize; x < textureSize; x += meshSize) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(textureSize-1, textureSize-x-1);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(textureSize-x, 0);
-        ctx.lineTo(0, textureSize-x-1);
-        ctx.stroke();
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(4, 1);
-    return texture;
-}
 
 // Создание парилки
-function createSauna() {
+function createSauna(rapierPromise) {
     const wallTexture = createWoodTexture('#8B4513');
     const ceilingTexture = createWoodTexture('#a0522d');
     const floorTexture = createWoodTexture('#5a3520');
@@ -712,6 +573,10 @@ function createSauna() {
     handle.position.set(rightFrameOffset-0.18, 1.1, depth / 2 - 0.05);
     handle.receiveShadow = true;
     scene.add(handle);
+
+    return rapierPromise.then(({RAPIER, rapierWorld}) => {
+        createPhysicsWalls(RAPIER, rapierWorld);
+    })
 }
 
 // Создание пара
@@ -720,6 +585,7 @@ function createSteam(group, interactionObject) {
         color: 0xffffff,
         transparent: true,
         opacity: 0.15,
+        side: THREE.DoubleSide,
         depthWrite: false
     });
 
@@ -910,194 +776,56 @@ function createStove() {
 }
 
 // Создание лавок
-function createBench() {
-    const benchTexture = createWoodTexture('#a0522d');
-    const benchMaterial = new THREE.MeshStandardMaterial({
-        map: benchTexture,
-        roughness: 0.7,
-        metalness: 0.05
+function createBench(rapierPromise) {
+    const bench1 = new Bench2(
+        scene,
+        rapierPromise,
+        new THREE.Vector3(0, 0.6, -1.75),
+        new THREE.Euler(0, Math.PI, 0)
+    )
+
+    const bench1RapierInit = bench1.physicsPromise.then(() => {
+        dynamicBodies.set(bench1.mesh.uuid, {
+            mesh: bench1.mesh,
+            body: bench1.physicsBody
+        });
+    }, (err) => {
+        console.log('bench1 physics promise rejected', err);
     });
 
-    // Нижняя лавка
-    const bench1Group = new THREE.Group();
-    const bench1InnerGroup = new THREE.Group();
-    
-    // Сиденье
-    const seatGeometry = new THREE.BoxGeometry(1.8, 0.08, 0.6);
-    const seat1 = new THREE.Mesh(seatGeometry, benchMaterial);
-    seat1.position.set(0, 0.6, -1.4);
-    seat1.castShadow = true;
-    seat1.receiveShadow = true;
-    seat1.interactionObject = bench1Group;
-    bench1InnerGroup.add(seat1);
+    const leftBench = new Bench(
+        scene,
+        rapierPromise,
+        new THREE.Vector3(-2.6, 0.56, -0.2),
+        new THREE.Euler(0, Math.PI/2, 0)
+    )
 
-    // Ножки
-    const legGeometry = new THREE.BoxGeometry(0.08, 0.6, 0.08);
-    const positions = [[-0.8, 0.3, -1.7], [-0.8, 0.3, -1.15], [0.8, 0.3, -1.7], [0.8, 0.3, -1.15]];
-    positions.forEach(pos => {
-        const leg = new THREE.Mesh(legGeometry, benchMaterial);
-        leg.position.set(...pos);
-        leg.castShadow = true;
-        leg.receiveShadow = true;
-        leg.interactionObject = bench1Group;
-        bench1InnerGroup.add(leg);
+    const leftBenchRapierInit = leftBench.physicsPromise.then(() => {
+        dynamicBodies.set(leftBench.mesh.uuid, {
+            mesh: leftBench.mesh,
+            body: leftBench.physicsBody
+        });
+    }, (err) => {
+        console.log('Left Bench physics promise rejected', err);
     });
 
-    // Спинка
-    const backGeometry = new THREE.BoxGeometry(1.8, 0.5, 0.05);
-    const back1 = new THREE.Mesh(backGeometry, benchMaterial);
-    back1.position.set(0, 0.85, -1.725);
-    back1.castShadow = true;
-    back1.receiveShadow = true;
-    back1.interactionObject = bench1Group;
-    bench1InnerGroup.add(back1);
-
-    // Верхняя лавка (полка)
-    const seat2 = new THREE.Mesh(
-        new THREE.BoxGeometry(1.8, 0.08, 0.8),
-        benchMaterial
-    );
-    seat2.position.set(0, 1.1, -2.1);
-    seat2.castShadow = true;
-    seat2.receiveShadow = true;
-    seat2.interactionObject = bench1Group;
-    bench1InnerGroup.add(seat2);
-
-    // Опоры
-    const supportGeometry = new THREE.BoxGeometry(0.08, 1.05, 0.08);
-    const supportPositions = [[-0.8, 0.525, -2.45], [0.8, 0.525, -2.45]];
-    supportPositions.forEach(pos => {
-        const support = new THREE.Mesh(supportGeometry, benchMaterial);
-        support.position.set(...pos);
-        support.castShadow = true;
-        support.receiveShadow = true;
-        support.interactionObject = bench1Group;
-        bench1InnerGroup.add(support);
-    });
-
-    var bbox = new THREE.Box3().setFromObject(bench1InnerGroup);
-    bench1InnerGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
-    bench1Group.add(bench1InnerGroup);
-    bench1Group.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
-    bench1Group.interactable = true;
-    scene.add(bench1Group);
-    uninitializedDynamicBodies.set('bench1', bench1Group);
-
-    // Лавка слева
-    const tmpGroup = new THREE.Group();
-    const leftBenchGroup = new THREE.Group();
-    
-    const leftSeat = new THREE.Mesh(
-        new THREE.BoxGeometry(0.6, 0.08, 2),
-        benchMaterial
-    );
-    leftSeat.position.set(-2.6, 0.6, -0.5);
-    leftSeat.castShadow = true;
-    leftSeat.receiveShadow = true;
-    leftSeat.interactionObject = leftBenchGroup;
-    tmpGroup.add(leftSeat);
-    
-    // Ножки левой лавки
-    const leftLegPositions = [
-        [-2.85, 0.3, -1.3], [-2.85, 0.3, 0.3], 
-        [-2.35, 0.3, -1.3], [-2.35, 0.3, 0.3]
-    ];
-    leftLegPositions.forEach(pos => {
-        const leg = new THREE.Mesh(legGeometry, benchMaterial);
-        leg.position.set(...pos);
-        leg.castShadow = true;
-        leg.interactionObject = leftBenchGroup;
-        tmpGroup.add(leg);
-    });
-
-    bbox = new THREE.Box3().setFromObject(tmpGroup);
-    tmpGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
-    leftBenchGroup.add(tmpGroup);
-    leftBenchGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
-    leftBenchGroup.interactable = true;
-    scene.add(leftBenchGroup);
-    uninitializedDynamicBodies.set('leftBench', leftBenchGroup);
+    return Promise.allSettled([bench1RapierInit, leftBenchRapierInit])
 }
 
 // Создание аксессуаров
-function createAccessories() {
-    // Ведро
-    loadGLBModel(bucketModel, new THREE.Vector3(-1.24, 0.32, -2.15), new THREE.Euler(0, Math.PI * 1.2,0), (new THREE.Vector3(1,1,1)).multiplyScalar(0.3)).then((model) => {
-        const bucketGroup = new THREE.Group();
-        const tmpGroup = new THREE.Group();
-        // Задаем параметр interactionObject для Mesh, которая выбирается при наведении
-        model.children[0].children[0].children[0].children[0].interactionObject = bucketGroup;
-        tmpGroup.add(model)
+function createAccessories(rapierPromise) {
+    const bucket = new Bucket(
+        scene,
+        rapierPromise,
+        new THREE.Vector3(-1.24, 0.32, -2.15),
+        new THREE.Euler(0, Math.PI * 1.2,0)
+    )
 
-        // Рисуем воду в ведре
-        const bb = new THREE.Box3();
-        bb.setFromObject(model);
-        const width = bb.max.x - bb.min.x;
-        const innerRadius = width*0.65 / 2;
-        const x = (bb.max.x + bb.min.x) / 2;
-        const z = (bb.max.z + bb.min.z) / 2;
-        const height = bb.max.y - bb.min.y;
-        const fillAmount = 0.6
-        const y = bb.min.y + height*fillAmount;
-        
-        const waterGeometry = new THREE.CircleGeometry(innerRadius, 12);
-        const waterMaterial = new THREE.MeshStandardMaterial({
-            color: 0x3366aa,
-            transparent: true,
-            opacity: 0.6,
-            roughness: 0.1,
-            metalness: 0.3
+    const bucketPromise = bucket.physicsPromise.then(() => {
+        dynamicBodies.set(bucket.mesh.uuid, {
+            mesh: bucket.mesh,
+            body: bucket.physicsBody
         });
-        const water = new THREE.Mesh(waterGeometry, waterMaterial);
-        water.rotation.x = -Math.PI / 2;
-        // water.rotation.y = 0.1; // поворот относительно горизонта
-        water.rotation.z = 0.3;
-        water.position.set(x, y, z);
-        water.interactionObject = bucketGroup;
-        tmpGroup.add(water);
-
-        const bbox = new THREE.Box3().setFromObject(tmpGroup);
-        tmpGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
-        bucketGroup.add(tmpGroup);
-        bucketGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
-
-        scene.add(bucketGroup);
-
-        // === Добавляем физику для ведра ===
-        if (rapierWorld) {
-            // Вычисляем bounding box для точных размеров
-            const bb = new THREE.Box3().setFromObject(bucketGroup);
-            const size = new THREE.Vector3();
-            bb.getSize(size);
-            
-            // Создаём динамическое rigid body
-            const bucketDesc = RAPIER.RigidBodyDesc.dynamic()
-                .setTranslation(bucketGroup.position.x, bucketGroup.position.y, bucketGroup.position.z)
-                .setRotation({w: bucketGroup.quaternion._w, x: bucketGroup.quaternion._x, y: bucketGroup.quaternion._y, z: bucketGroup.quaternion._z})
-                .setLinearDamping(0.5)     // Сопротивление движению
-                .setAngularDamping(0.5);   // Сопротивление вращению
-            
-            const bucketBody = rapierWorld.createRigidBody(bucketDesc);
-            
-            // Создаём коллайдер (ящик вместо точной формы для производительности)
-            const bucketColliderDesc = RAPIER.ColliderDesc.cylinder(size.y*0.9 / 2, size.x*0.65 / 2)
-                .setTranslation(-0.02, -0.02, 0.02)
-                .setMass(2.0)            // Масса в кг
-                .setFriction(0.6)         // Трение дерева
-                .setRestitution(0.2);     // Небольшая упругость
-            
-            rapierWorld.createCollider(bucketColliderDesc, bucketBody);
-            
-            // Сохраняем связь между Three.js объектом и физическим телом
-            dynamicBodies.set(bucketGroup.uuid, {
-                mesh: bucketGroup,
-                body: bucketBody
-            });
-            
-            bucketGroup.userData.physicsBody = bucketBody;
-            bucketGroup.userData.isDynamic = true;
-            bucketGroup.interactable = true;
-        }
     })
 
     // Часы на стене
@@ -1153,6 +881,7 @@ function createAccessories() {
     thermometerGroup.add(mercury);
 
     scene.add(thermometerGroup);
+    return bucketPromise;
 }
 
 // Создание освещения
@@ -1170,9 +899,7 @@ function createLighting() {
 }
 
 
-function createPhysicsWalls() {
-    if (!rapierWorld) return;
-    
+function createPhysicsWalls(RAPIER, rapierWorld) {
     // Размеры парилки (из createSauna)
     const width = 6;
     const height = 3;
@@ -1243,9 +970,7 @@ function createPhysicsWalls() {
     // rapierWorld.createCollider(frontTopColliderDesc, frontTopBody);
 }
 
-function createPhysicsStove() {
-    if (!rapierWorld) return;
-    
+function createPhysicsStove(RAPIER, rapierWorld) {
     // Основание печи (коробка)
     const stoveBaseDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(-2.3, 0.45, -2));
     const stoveBaseBody = rapierWorld.createRigidBody(stoveBaseDesc);
@@ -1267,9 +992,7 @@ function createPhysicsStove() {
     rapierWorld.createCollider(pipeColliderDesc, pipeBody);
 }
 
-function createPhysicsBenches() {
-    if (!rapierWorld) return;
-    
+function createBench1Physics(RAPIER, rapierWorld, bench1Group) {
     const benchMaterial = { friction: 0.8, restitution: 0.1 };
 
     // Первая лавка
@@ -1315,7 +1038,6 @@ function createPhysicsBenches() {
         .setRestitution(benchMaterial.restitution);
         rapierWorld.createCollider(supportColliderDesc, bench1Body);
     });
-    const bench1Group = uninitializedDynamicBodies.get('bench1');
     dynamicBodies.set(bench1Group.uuid, {
         mesh: bench1Group,
         body: bench1Body
@@ -1323,8 +1045,10 @@ function createPhysicsBenches() {
     
     bench1Group.userData.physicsBody = bench1Body;
     bench1Group.userData.isDynamic = true;
-    uninitializedDynamicBodies.delete('bench1');
+}
 
+function createLeftBenchPhysics(RAPIER, rapierWorld, leftBenchGroup) {
+    const benchMaterial = { friction: 0.8, restitution: 0.1 };
     // === Левая лавка ===
     const leftBenchDesc = RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(-2.6, 0.32, -0.5)
@@ -1350,7 +1074,6 @@ function createPhysicsBenches() {
         .setRestitution(benchMaterial.restitution);
         rapierWorld.createCollider(leftLegColliderDesc, leftBenchBody);
     });
-    const leftBenchGroup = uninitializedDynamicBodies.get('leftBench');
     dynamicBodies.set(leftBenchGroup.uuid, {
         mesh: leftBenchGroup,
         body: leftBenchBody
@@ -1358,50 +1081,10 @@ function createPhysicsBenches() {
     
     leftBenchGroup.userData.physicsBody = leftBenchBody;
     leftBenchGroup.userData.isDynamic = true;
-    uninitializedDynamicBodies.delete('leftBench');
 }
 
-// Создание всех статических коллизий
-function createAllStaticColliders() {
-    createPhysicsWalls();
-    // createPhysicsStove();
-    createPhysicsBenches();
-}
 
-// function createPlayerPhysics() {
-//     if (!rapierWorld) return;
-    
-//     // Игрок как динамическое тело (капсула аппроксимируется цилиндром + сферы, или просто капсула)
-//     // Для простоты используем шар с немного приплюснутой формой
-    
-//     const playerHeight = 1.7;
-//     const playerRadius = 0.3; // Радиус столкновений игрока
-    
-//     // Жёсткое тело игрока (кинематическое, управляемое напрямую)
-//     const playerDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
-//         .setTranslation(camera.position.x, camera.position.y - playerHeight / 2, camera.position.z);
-    
-//     playerBody = rapierWorld.createRigidBody(playerDesc);
-    
-//     // Капсула не поддерживается напрямую в некоторых версиях, используем цилиндр
-//     // Ось Y — вертикальная для цилиндра
-//     const playerColliderDesc = RAPIER.ColliderDesc.capsule(playerHeight / 2 - playerRadius, playerRadius)
-//         .setFriction(0.0)      // Без трения при движении (мы управляем сами)
-//         .setRestitution(0.0);  // Без упругости
-    
-//     // Альтернативно, если капсула не поддерживается:
-//     // const playerColliderDesc = RAPIER.ColliderDesc.ball(playerRadius);
-    
-//     playerCollider = rapierWorld.createCollider(playerColliderDesc, playerBody);
-    
-//     console.log('Player physics created');
-// }
-
-function createPlayerPhysics() {
-    if (!rapierWorld) return;
-    
-    // const RAPIER = window.RAPIER;
-    
+function createPlayerPhysics(RAPIER, rapierWorld) {
     // === Игрок — DYNAMIC rigid body ===
     // Это позволяет телу сталкиваться со стенами и препятствиями
     const playerDesc = RAPIER.RigidBodyDesc.dynamic()
@@ -1422,7 +1105,7 @@ function createPlayerPhysics() {
         .setFriction(0.0)        // Без трения при скольжении
         .setRestitution(0.0);    // Без упругости
     
-    playerCollider = rapierWorld.createCollider(playerColliderDesc, playerBody);
+    const playerCollider = rapierWorld.createCollider(playerColliderDesc, playerBody);
     
     console.log('Player physics created (dynamic body with locked rotations)');
 }
@@ -1777,73 +1460,13 @@ function animate(time) {
         }
     }
 
-    if (!playerBody && !rapierWorld && isLocked) {
-        // Движение
-
-        // Замедление
-        const slowDownSpeed = 8.0; // Во сколько раз замедляется игрок за секунду (это происходит каждый фрейм и замедление всегда от новой скорости на каждом фрейме)
-        const stopSpeed = 1e-2; // При какой скорости происходит окончательная остановка
-        velocity.x -= velocity.x * slowDownSpeed * delta;
-        if (Math.abs(velocity.x) < stopSpeed) velocity.x = 0;
-        velocity.z -= velocity.z * slowDownSpeed * delta;
-        if (Math.abs(velocity.z) < stopSpeed) velocity.z = 0;
-        
-        direction.z = Number(moveForward) - Number(moveBackward);
-        direction.x = Number(moveRight) - Number(moveLeft);
-        direction.normalize();
-        
-        if (enableLog) {
-            setLogValue('direction.x', direction.x);
-            setLogValue('direction.z', direction.z);
-        }
-
-        const speed = 20.0; // С какой скоростью игрок ускоряется
-        
-        if (moveForward || moveBackward) {
-            velocity.z += direction.z * speed * delta;
-        }
-        if (moveLeft || moveRight) {
-            velocity.x += direction.x * speed * delta;
-        }
-
-        if (enableLog) {
-            setLogValue('velocity.x', velocity.x);
-            setLogValue('velocity.z', velocity.z);
-        }
-
-        // Применение движения с учётом направления камеры
-        const forward = new THREE.Vector3(0, 0, -1);
-        forward.applyQuaternion(camera.quaternion);
-        forward.y = 0;
-        forward.normalize();
-
-        const right = new THREE.Vector3(1, 0, 0);
-        right.applyQuaternion(camera.quaternion);
-        right.y = 0;
-        right.normalize();
-
-        camera.position.add(forward.multiplyScalar(velocity.z * delta));
-        camera.position.add(right.multiplyScalar(velocity.x * delta));
-
-        // Ограничение позиции внутри парилки
-        camera.position.x = Math.max(-2.7, Math.min(2.7, camera.position.x));
-        camera.position.z = Math.max(-2.2, Math.min(2.2, camera.position.z));
-        camera.position.y = 1.7; // Фиксированная высота (рост человека)
-
-        if (enableLog) {
-            setLogValue('camera.position.x', camera.position.x);
-            setLogValue('camera.position.y', camera.position.y);
-            setLogValue('camera.position.z', camera.position.z);
-        }
-        
-    }
-
     if (isLocked) objectSelector.update(delta);
 
     // === Синхронизация динамических объектов ===
     dynamicBodies.forEach((data, uuid) => {
         const { mesh, body } = data;
         
+
         if (body.bodyType() === RAPIER.RigidBodyType.Dynamic && (!objectSelector.pickedUp || objectSelector.pickedUp && objectSelector.selected?.uuid != mesh.uuid)) {
             // Объект под физикой и не поднят игроком
             const position = body.translation();
