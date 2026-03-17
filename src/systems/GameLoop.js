@@ -1,6 +1,8 @@
 export default class GameLoop {
     scene
     camera
+    physics
+    objectSelector
 
     constructor() {
         this.scene = null;

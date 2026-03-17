@@ -13,7 +13,7 @@ class RapierDebugRenderer {
     this.mesh.frustumCulled = false;
     this.mesh.intersectable = false;
     this.mesh.visible = true;
-    scene.add(this.mesh);
+    scene.scene.add(this.mesh);
     console.log('added debug mesh', this.mesh);
   }
 
@@ -29,6 +29,16 @@ class RapierDebugRenderer {
 }
 
 export default class Physics {
+    RAPIER
+    world
+    player
+    cameraToBodyPosition
+    scene
+    debug
+    initialized
+    postInit
+    rapierDebugRenderer
+
     constructor() {
         this.debug = false;
         this.world = null;
@@ -50,16 +60,40 @@ export default class Physics {
         this.rapierDebugRenderer = null;
     }
 
-    afterInitialization(fn) {
-        // this.postInit.push(
-        //     this.initialized.then(() => {
-        //         try { fn(this) } catch (error) { console.log(error) }
-        //     }
-        // )
-        // );
+    atInit(fn) {
         this.postInit.push(
-            this.initialized.then(() => fn(this))
+            this.initialized.then(() => { try { fn(this) } catch (error) { console.log(error) } })
+            // this.initialized.then(() => fn(this))
         );
+    }
+
+    createPlayer(height = 1.7, radius = 0.3, cameraToBodyPosition = { x: 0, y: 0.85, z: 0 }) {
+        this.atInit(() => this.createPlayerInner(height, radius, cameraToBodyPosition));
+    }
+
+    createPlayerInner(height, radius, cameraToBodyPosition) {
+        // Это позволяет телу сталкиваться со стенами и препятствиями
+        const playerDesc = this.RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(
+                this.scene.camera.position.x - cameraToBodyPosition.x,
+                this.scene.camera.position.y - cameraToBodyPosition.y,
+                this.scene.camera.position.z - cameraToBodyPosition.z,
+            )
+            .setLinvel(0, 0, 0)
+            .lockRotations();  // Запрещаем вращение тела — оно всегда вертикально
+        
+        this.player = this.world.createRigidBody(playerDesc);
+        this.cameraToBodyPosition = cameraToBodyPosition;
+        
+        // Капсула для игрока
+        const playerColliderDesc = this.RAPIER.ColliderDesc.capsule(
+            height / 2 - radius,  // half-height цилиндра (без полусфер)
+            radius
+        )
+            .setFriction(0.0)        // Без трения при скольжении
+            .setRestitution(0.0);    // Без упругости
+        
+        this.world.createCollider(playerColliderDesc, this.player);
     }
 
     async init() {
@@ -83,11 +117,18 @@ export default class Physics {
             mesh.position.set(position.x, position.y, position.z);
             mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
         })
+        // Для тела игрока обновляется только позиция, без поворота камеры
+        const position = this.player.translation();
+        this.scene.camera.position.set(
+            position.x + this.cameraToBodyPosition.x,
+            position.y + this.cameraToBodyPosition.y,
+            position.z + this.cameraToBodyPosition.z,
+        );
     }
 
-    enableDebug(scene) {
+    enableDebug() {
         if (this.rapierDebugRenderer) return;
-        this.rapierDebugRenderer = new RapierDebugRenderer(scene, this.world);
+        this.rapierDebugRenderer = new RapierDebugRenderer(this.scene, this.world);
     }
 
     disableDebug() {
@@ -96,15 +137,16 @@ export default class Physics {
         this.rapierDebugRenderer = null;
     }
 
-    toggleDebug(scene) {
+    toggleDebug() {
         if (!this.rapierDebugRenderer) {
-            this.enableDebug(scene);
+            this.enableDebug();
         } else {
             this.disableDebug();
         }
     }
 
     update(delta) {
+        this.updateSceneFromPhysics();
         this.world.timestep = delta;
         this.world.step();
         if (this.rapierDebugRenderer) this.rapierDebugRenderer.update();

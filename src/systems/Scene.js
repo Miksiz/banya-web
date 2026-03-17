@@ -5,25 +5,22 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 export default class Scene {
-    constructor() {
-        this.scene = null;
-        this.camera = null;
-        this.physics = null;
-        this.renderer = null;
-        this.composer = null;
-        this.outlinePass = null;
-        this.onWindowResize = null;
-        this.init();
-    }
-
-    init() {
+    scene
+    camera
+    physics
+    renderer
+    composer
+    outlinePass
+    onWindowResize
+    
+    constructor(physics) {
         // Сцена
         this.scene = new THREE.Scene();
+        physics.scene = this;
 
         // Камера
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
         this.camera.position.set(0, 0, 0);
-
 
         // Рендерер
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -42,6 +39,10 @@ export default class Scene {
         this.composer.addPass( new OutputPass() );
 
         window.addEventListener('resize', this.onWindowResize = this.onWindowResizeHandler.bind(this));
+        
+        physics.atInit((physics) => {
+            this.physics = physics
+        })
     }
 
     onWindowResizeHandler() {

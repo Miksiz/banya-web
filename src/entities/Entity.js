@@ -23,7 +23,7 @@ export default class Entity {
             this.mesh.updateMatrix();
             this.mesh.updateMatrixWorld(true);
             scene.add(this.mesh);
-            physics.afterInitialization(this.createPhysics.bind(this))
+            physics.atInit(this.createPhysics.bind(this))
         })
         // this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
     }
