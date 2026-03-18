@@ -83,4 +83,54 @@ function mesh(baseColor = '#302c29ff', meshSize = 10) {
     return texture;
 }
 
-export { wood, mesh };
+class Flame {
+    canvas
+    ctx
+    updateTime
+    texture
+
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.ctx = this.canvas.getContext('2d');
+
+        this.canvas.width = 256;
+        this.canvas.height = 256;
+
+        this.updateTime = Date.now();
+
+        this.drawFlame();
+
+        this.texture = new THREE.CanvasTexture(this.canvas);
+        this.texture.wrapS = THREE.RepeatWrapping;
+        this.texture.wrapT = THREE.ClampToEdgeWrapping;
+        this.texture.repeat.set(1, 1);
+    }
+
+    drawFlame() {
+        // Очистка canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        const time = this.updateTime;
+        // Градиент пламени
+        const flameGradient = this.ctx.createLinearGradient(
+            this.canvas.width/2, 0,
+            this.canvas.width/2, this.canvas.height
+        );
+        flameGradient.addColorStop(0, 'rgba(255, 255, 200, 1)');
+        // flameGradient.addColorStop(0.3+0.05*Math.sin(time+0.5*Math.random()), 'rgba(255, 200, 50, 1)');
+        flameGradient.addColorStop(0.1+0.1*Math.sin(time+0.3*Math.random()), 'rgba(255, 200, 50, 1)');
+        flameGradient.addColorStop(0.6+0.1*Math.cos(time+0.3*Math.random()), 'rgba(255, 100, 0, 1)');
+        flameGradient.addColorStop(1, 'rgba(255, 50, 0, 1)');
+
+        this.ctx.fillStyle = flameGradient;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    update(delta) {
+        this.updateTime += delta;
+        this.drawFlame();
+        this.texture.needsUpdate = true;
+    }
+
+}
+
+export { wood, mesh, Flame };

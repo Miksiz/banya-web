@@ -3,6 +3,7 @@ import Scene from './systems/Scene.js'
 import Bucket from './entities/Bucket.js';
 import Bench from './entities/Bench.js';
 import Bench2 from './entities/Bench2.js';
+import Stove from './entities/Stove.js';
 
 import { wood as createWoodTexture, mesh as createMeshTexture } from './utils/textures.js';
 import Physics from './systems/Physics.js';
@@ -11,6 +12,7 @@ import ObjectSelector from './systems/ObjectSelector.js';
 // Основные переменные
 let camera, scene, sceneObj, physics, objectSelector;
 let steamParticles = [];
+let updatedObjects = [];
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
@@ -52,6 +54,12 @@ async function init() {
     // Создание парилки
     createSauna(physics);
     createStove();
+    updatedObjects.push(new Stove(
+        scene,
+        physics,
+        new THREE.Vector3(1.6, 0.45, -0.2),
+        new THREE.Euler(0, -Math.PI/2, 0)
+    ));
     createBench(physics);
 
     // === Создаём физические коллизии для статических объектов ===
@@ -955,6 +963,7 @@ function animate(time) {
 
 
     animateSteam(delta);
+    updatedObjects.forEach(obj => obj.update(delta))
 
     // Лёгкое мерцание света от печи
     const stoveLights = scene.children.filter(c => c.type === 'PointLight' && c.position.x === -2.3);
