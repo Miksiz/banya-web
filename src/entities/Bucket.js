@@ -59,7 +59,7 @@ export default class Bucket extends Entity {
         // Создаём динамическое rigid body
         const bucketDesc = physics.RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z)
-            .setRotation({ w: this.mesh.quaternion._w, x: this.mesh.quaternion._x, y: this.mesh.quaternion._y, z: this.mesh.quaternion._z })
+            .setRotation({ w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z })
             .setLinearDamping(0.5)     // Сопротивление движению
             .setAngularDamping(0.5);   // Сопротивление вращению
 

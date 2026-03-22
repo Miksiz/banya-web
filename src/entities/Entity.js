@@ -11,7 +11,7 @@ export default class Entity {
         physics,
         position = new THREE.Vector3(0, 0, 0),
         rotation = new THREE.Euler(0, 0, 0),
-        scale = 1
+        scale = 1,
     ) {
         if (this.initialize) this.initialize();
         // const meshPromise = this.createMesh().then(mesh => {
@@ -22,8 +22,8 @@ export default class Entity {
             this.mesh.scale.multiplyScalar(scale);
             this.mesh.updateMatrix();
             this.mesh.updateMatrixWorld(true);
-            scene.add(this.mesh);
-            physics.atInit(this.createPhysics.bind(this))
+            scene.add(this);
+            physics.atInit(this.createPhysics.bind(this));
         })
         // this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
     }

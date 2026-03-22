@@ -14,7 +14,6 @@ class RapierDebugRenderer {
     this.mesh.intersectable = false;
     this.mesh.visible = true;
     scene.scene.add(this.mesh);
-    console.log('added debug mesh', this.mesh);
   }
 
   update() {
@@ -103,8 +102,9 @@ export default class Physics {
     updateBodyFromThree(mesh) {
         const body = mesh?.userData?.physicsBody;
         if (!body) return;
-        body.setTranslation({...mesh.position});
-        body.setRotation({w: mesh.quaternion._w, x: mesh.quaternion._x, y: mesh.quaternion._y, z: mesh.quaternion._z});
+
+        body.setTranslation(mesh.position, true);
+        body.setRotation(mesh.quaternion, true);
     }
 
     updateSceneFromPhysics() {
@@ -113,7 +113,6 @@ export default class Physics {
             if (!mesh) return;
             const position = body.translation();
             const rotation = body.rotation();
-            
             mesh.position.set(position.x, position.y, position.z);
             mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
         })

@@ -87,7 +87,12 @@ class Flame {
     canvas
     ctx
     updateTime
+    updateTime1
+    updateTime2
+    intensity
     texture
+    lastJumpTime
+    minJumpDelay
 
     constructor() {
         this.canvas = document.createElement('canvas');
@@ -97,28 +102,40 @@ class Flame {
         this.canvas.height = 256;
 
         this.updateTime = Date.now();
+        this.updateTime1 = Date.now();
+        this.updateTime2 = Date.now();
+        this.intensity = null;
+        this.intensityJump = null;
+        this.minJumpDelay = 0.1;
+        this.lastJumpTime = Date.now() - this.minJumpDelay*2;
 
         this.drawFlame();
 
         this.texture = new THREE.CanvasTexture(this.canvas);
         this.texture.wrapS = THREE.RepeatWrapping;
         this.texture.wrapT = THREE.ClampToEdgeWrapping;
-        this.texture.repeat.set(1, 1);
+        this.texture.repeat.set(2, 1);
+
     }
 
     drawFlame() {
         // Очистка canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        const time = this.updateTime;
         // Градиент пламени
         const flameGradient = this.ctx.createLinearGradient(
             this.canvas.width/2, 0,
             this.canvas.width/2, this.canvas.height
         );
-        flameGradient.addColorStop(0, 'rgba(255, 255, 200, 1)');
-        // flameGradient.addColorStop(0.3+0.05*Math.sin(time+0.5*Math.random()), 'rgba(255, 200, 50, 1)');
-        flameGradient.addColorStop(0.1+0.1*Math.sin(time+0.3*Math.random()), 'rgba(255, 200, 50, 1)');
-        flameGradient.addColorStop(0.6+0.1*Math.cos(time+0.3*Math.random()), 'rgba(255, 100, 0, 1)');
+
+        if (this.updateTime - this.lastJumpTime > this.minJumpDelay) {
+            this.lastJumpTime = this.updateTime;
+            this.intensityJump = 0.1*(Math.random()-0.5);
+        }
+        this.intensity = 0.5 + 0.2*Math.cos(this.updateTime2*0.1) + this.intensityJump;
+
+        flameGradient.addColorStop(0, 'rgba(255, 200, 50, 1)');
+        flameGradient.addColorStop(0.1+0.1*Math.sin(this.updateTime1*0.1), 'rgba(255, 150, 50, 1)');
+        flameGradient.addColorStop(1-this.intensity, 'rgba(255, 80, 0, 1)');
         flameGradient.addColorStop(1, 'rgba(255, 50, 0, 1)');
 
         this.ctx.fillStyle = flameGradient;
@@ -127,6 +144,8 @@ class Flame {
 
     update(delta) {
         this.updateTime += delta;
+        this.updateTime1 += delta*Math.random();
+        this.updateTime2 += delta*Math.random();
         this.drawFlame();
         this.texture.needsUpdate = true;
     }

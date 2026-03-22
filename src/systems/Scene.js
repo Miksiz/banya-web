@@ -12,6 +12,7 @@ export default class Scene {
     composer
     outlinePass
     onWindowResize
+    updatedObjects
     
     constructor(physics) {
         // Сцена
@@ -27,7 +28,9 @@ export default class Scene {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.shadowMap.enabled = true;
+        // this.renderer.shadowMap.type = THREE.BasicShadowMap;
         this.renderer.shadowMap.type = THREE.PCFShadowMap;
+        // this.renderer.shadowMap.type = THREE.VSMShadowMap;
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 0.8;
         document.body.appendChild(this.renderer.domElement);
@@ -43,6 +46,7 @@ export default class Scene {
         physics.atInit((physics) => {
             this.physics = physics
         })
+        this.updatedObjects = [];
     }
 
     onWindowResizeHandler() {
@@ -50,6 +54,33 @@ export default class Scene {
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.outlinePass.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    add(entity) {
+        this.scene.add(entity.mesh);
+        if (typeof entity.update === 'function') this.updatedObjects.push(entity);
+    }
+
+    rotateCamera(movementX, movementY, sensitivity) {
+        if (movementX == 0 && movementY == 0) return;
+
+        // Применяем вращение к Euler углам
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(this.camera.quaternion);
+
+        // Горизонтальное вращение (вокруг оси Y)
+        euler.y -= movementX * sensitivity;
+        // Вертикальное вращение (вокруг оси X)
+        euler.x -= movementY * sensitivity;
+
+        // Ограничение вертикального вращения
+        euler.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, euler.x));
+
+        // Применяем к камере
+        this.camera.quaternion.setFromEuler(euler);
+    }
+
+    update(delta) {
+        this.updatedObjects.forEach(obj => obj.update(delta))
     }
 
     render() {

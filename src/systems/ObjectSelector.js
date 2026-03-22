@@ -153,9 +153,11 @@ export default class ObjectSelector {
     // === Включаем физику при отпускании ===
     const physicsBody = this.selected.userData?.physicsBody;
     if (physicsBody) {
-        // Возвращаем динамический режим
+      if (this.selected.userData?.isDynamic) {
         physicsBody.setBodyType(this.physics.RAPIER.RigidBodyType.Dynamic, true);
-        // console.log('restored physics')
+      } else {
+        physicsBody.setBodyType(this.physics.RAPIER.RigidBodyType.Fixed, true);
+      }
     }
 
   }

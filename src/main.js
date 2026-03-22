@@ -4,27 +4,21 @@ import Bucket from './entities/Bucket.js';
 import Bench from './entities/Bench.js';
 import Bench2 from './entities/Bench2.js';
 import Stove from './entities/Stove.js';
+import SaunaBox from './entities/SaunaBox.js';
 
-import { wood as createWoodTexture, mesh as createMeshTexture } from './utils/textures.js';
 import Physics from './systems/Physics.js';
 import ObjectSelector from './systems/ObjectSelector.js';
+import Clock from './entities/Clock.js';
+import Thermometer from './entities/Thermometer.js';
 
 // Основные переменные
 let camera, scene, sceneObj, physics, objectSelector;
-let steamParticles = [];
-let updatedObjects = [];
 let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-let velocity = new THREE.Vector3();
-let direction = new THREE.Vector3();
-let euler = new THREE.Euler(0, 0, 0, 'YXZ'); // Для вычисления направления камеры
-let PI_2 = Math.PI / 2;
 const mouseSensitivity = 0.002;
 const touchSensitivity = 0.003;
 let isLocked = false;
 let timer = new THREE.Timer();
 timer.connect(document);
-const enableLog = false;
-let log_values = new Map();
 
 let touchActivity = {
     inProgress: false,
@@ -52,23 +46,55 @@ async function init() {
     camera.position.set(0, 1.7, 0);
 
     // Создание парилки
-    createSauna(physics);
-    createStove();
-    updatedObjects.push(new Stove(
-        scene,
+    // createSauna(physics);
+
+    new SaunaBox(
+        sceneObj,
         physics,
-        new THREE.Vector3(1.6, 0.45, -0.2),
-        new THREE.Euler(0, -Math.PI/2, 0)
-    ));
-    createBench(physics);
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Euler(0, 0, 0),
+    );
+    new Stove(
+        sceneObj,
+        physics,
+        new THREE.Vector3(-2.34, 0.53, -1.85),
+        new THREE.Euler(0, Math.PI/4, 0),
+    );
+    new Bench2(
+        sceneObj,
+        physics,
+        new THREE.Vector3(0, 0.6, -1.75),
+        new THREE.Euler(0, Math.PI, 0)
+    );
+    new Bench(
+        sceneObj,
+        physics,
+        new THREE.Vector3(-2.6, 0.56, 0.1),
+        new THREE.Euler(0, Math.PI/2, 0)
+    );
+    new Clock(
+        sceneObj,
+        physics,
+        new THREE.Vector3(0.0, 2.2, -2.48),
+        new THREE.Euler(0, 0, 0)
+    );
+    new Thermometer(
+        sceneObj,
+        physics,
+        new THREE.Vector3(-1.5, 2, -2.48),
+        new THREE.Euler(0, 0, 0)
+    );
 
     // === Создаём физические коллизии для статических объектов ===
     physics.createPlayer();
 
-    createAccessories(physics);
+    new Bucket(
+        sceneObj,
+        physics,
+        new THREE.Vector3(-1.24, 0.32, -2.15),
+        new THREE.Euler(0, Math.PI * 1.2,0)
+    )
     createLighting();
-
-    if (enableLog) createLog();
 
     // События управления
     setupControls(objectSelector);
@@ -80,608 +106,19 @@ async function init() {
 }
 
 
-// Создание парилки
-function createSauna(physics) {
-    const wallTexture = createWoodTexture('#8B4513');
-    const ceilingTexture = createWoodTexture('#a0522d');
-    const floorTexture = createWoodTexture('#5a3520');
-    const doorTexture = createWoodTexture('#4b2d1bff');
-
-    // Размеры парилки
-    const width = 6;
-    const height = 3;
-    const depth = 5;
-
-    // Пол
-    const floorGeometry = new THREE.PlaneGeometry(width, depth);
-    const floorMaterial = new THREE.MeshStandardMaterial({
-        map: floorTexture,
-        roughness: 0.9,
-        metalness: 0.1
-    });
-    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-
-    // Потолок
-    const ceilingGeometry = new THREE.PlaneGeometry(width, depth);
-    const ceilingMaterial = new THREE.MeshStandardMaterial({
-        map: ceilingTexture,
-        roughness: 0.8,
-        metalness: 0.1
-    });
-    const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
-    ceiling.position.y = height;
-    ceiling.rotation.x = Math.PI / 2;
-    ceiling.receiveShadow = true;
-    ceiling.castShadow = true;
-    scene.add(ceiling);
-
-    // Стены
-    const wallMaterial = new THREE.MeshStandardMaterial({
-        map: wallTexture,
-        roughness: 0.85,
-        metalness: 0.05
-    });
-
-    // Задняя стена
-    const backWall = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, height),
-        wallMaterial
-    );
-    backWall.position.set(0, height / 2, -depth / 2);
-    backWall.receiveShadow = true;
-    scene.add(backWall);
-
-    // Левая стена
-    const leftWall = new THREE.Mesh(
-        new THREE.PlaneGeometry(depth, height),
-        wallMaterial
-    );
-    leftWall.position.set(-width / 2, height / 2, 0);
-    leftWall.rotation.y = Math.PI / 2;
-    leftWall.receiveShadow = true;
-    scene.add(leftWall);
-
-    // Правая стена
-    const rightWall = new THREE.Mesh(
-        new THREE.PlaneGeometry(depth, height),
-        wallMaterial
-    );
-    rightWall.position.set(width / 2, height / 2, 0);
-    rightWall.rotation.y = -Math.PI / 2;
-    rightWall.receiveShadow = true;
-    rightWall.castShadow = true;
-    scene.add(rightWall);
-
-    // Передняя стена с дверью
-    const frontWallGroup = new THREE.Group();
-
-    // Верхняя часть над дверью
-    const topPart = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, 0.8),
-        wallMaterial
-    );
-    topPart.position.set(0, height - 0.4, depth / 2);
-    topPart.rotation.y = Math.PI;
-    topPart.receiveShadow = true;
-    topPart.castShadow = true;
-    frontWallGroup.add(topPart);
-
-    // Левая часть стены
-    const leftFrameOffset = 1.2
-    const leftPart = new THREE.Mesh(
-        new THREE.PlaneGeometry(width / 2 + leftFrameOffset, height - 0.8),
-        wallMaterial
-    );
-    leftPart.position.set(leftFrameOffset/2 - width/4, (height - 0.8) / 2, depth / 2);
-    leftPart.rotation.y = Math.PI;
-    leftPart.receiveShadow = true;
-    leftPart.castShadow = true;
-    frontWallGroup.add(leftPart);
-    
-    const rightFrameOffset = 2.4
-    // Правая часть стены
-    const rightPart = new THREE.Mesh(
-        new THREE.PlaneGeometry(width / 2 - rightFrameOffset, height - 0.8),
-        wallMaterial
-    );
-
-    rightPart.position.set(rightFrameOffset/2 + width/4, (height - 0.8) / 2, depth / 2);
-    rightPart.rotation.y = Math.PI;
-    rightPart.receiveShadow = true;
-    rightPart.castShadow = true;
-    frontWallGroup.add(rightPart);
-
-    // Рама двери
-    const doorFrameMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9, metalness: 0.1 });
-    const frameThickness = 0.08;
-
-    // Вертикальные части рамы
-    const frameGeo = new THREE.BoxGeometry(frameThickness, 2.2, frameThickness);
-    const leftFrame = new THREE.Mesh(frameGeo, doorFrameMaterial);
-    leftFrame.position.set(leftFrameOffset, 1.1, depth / 2);
-    leftFrame.receiveShadow = true;
-    // leftFrame.castShadow = true;
-    frontWallGroup.add(leftFrame);
-    
-    const rightFrame = new THREE.Mesh(frameGeo, doorFrameMaterial);
-    rightFrame.position.set(rightFrameOffset, 1.1, depth / 2);
-    rightFrame.receiveShadow = true;
-    // rightFrame.castShadow = true;
-    frontWallGroup.add(rightFrame);
-    
-    // Горизонтальная часть рамы
-    const topFrame = new THREE.Mesh(
-        new THREE.BoxGeometry((rightFrameOffset-leftFrameOffset) + frameThickness * 2, frameThickness, frameThickness),
-        doorFrameMaterial
-    );
-    topFrame.position.set((rightFrameOffset+leftFrameOffset)/2, 2.2, depth / 2);
-    topFrame.receiveShadow = true;
-    // topFrame.castShadow = true;
-    frontWallGroup.add(topFrame);
-
-    scene.add(frontWallGroup);
-
-    // Дверь (полупрозрачная)
-    const doorGeometry = new THREE.PlaneGeometry(rightFrameOffset-leftFrameOffset, 2.2);
-    // const doorMaterial = new THREE.MeshStandardMaterial({
-    //     color: 0x654321,
-    //     transparent: true,
-    //     opacity: 0.8,
-    //     roughness: 0.5,
-    //     metalness: 0.2
-    // });
-    // const door = new THREE.Mesh(doorGeometry, doorMaterial);
-    const doorMaterial = new THREE.MeshStandardMaterial({
-        map: doorTexture,
-        roughness: 0.9,
-        metalness: 0.05
-    });
-    const door = new THREE.Mesh(doorGeometry, doorMaterial);
-    door.position.set((rightFrameOffset+leftFrameOffset)/2, 1.1, depth / 2 - 0.01);
-    door.rotation.y = Math.PI;
-    door.receiveShadow = true;
-    // door.castShadow = true;
-    scene.add(door);
-
-    // Дверная ручка
-    const handleGeometry = new THREE.CylinderGeometry(0.03, 0.03, 0.15, 8);
-    // const handleMaterial = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.4, metalness: 0.8 });
-    const handle = new THREE.Mesh(handleGeometry, doorFrameMaterial);
-    handle.rotation.x = Math.PI / 2;
-    handle.position.set(rightFrameOffset-0.18, 1.1, depth / 2 - 0.05);
-    handle.receiveShadow = true;
-    scene.add(handle);
-
-    return physics.atInit(createPhysicsWalls);
-}
-
-// Создание пара
-function createSteam(group, interactionObject) {
-    const steamMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.15,
-        side: THREE.DoubleSide,
-        depthWrite: false
-    });
-
-    // Начальное облако пара
-    for (let i = 0; i < 25; i++) {
-        createSteamParticle(steamMaterial, group, interactionObject);
-    }
-}
-
-function createSteamParticle(material, group, interactionObject) {
-    const size = 0.2 + Math.random() * 0.2;
-    const geometry = new THREE.CircleGeometry(size, 12);
-    const steam = new THREE.Mesh(geometry, material.clone());
-    
-    steam.position.set(
-        -2.3 + (Math.random() - 0.5) * 0.5,
-        1.3 + Math.random() * 0.3,
-        -2 + (Math.random() - 0.5) * 0.5
-    );
-    
-    steam.rotation.set(
-        Math.random() * Math.PI,
-        Math.random() * Math.PI,
-        Math.random() * Math.PI
-    );
-    
-    steam.userData = {
-        velocity: new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3,
-            0.3 + Math.random() * 0.3,
-            (Math.random() - 0.5) * 0.3
-        ),
-        life: 0,
-        maxLife: 3 + Math.random() * 2
-    };
-    steam.interactionObject = interactionObject
-    group.add(steam);
-    steamParticles.push(steam);
-}
-
-function animateSteam(delta) {
-    steamParticles.forEach(steam => {
-        steam.position.add(steam.userData.velocity.clone().multiplyScalar(delta));
-        steam.userData.life += delta;
-        // Затухание
-        steam.material.opacity = 0.15 * (1 - steam.userData.life / steam.userData.maxLife);
-        // Растягивание пара
-        steam.scale.setScalar(1 + steam.userData.life * 0.3);
-        
-        // Удаление старого пара и создание нового
-        if (steam.userData.life > steam.userData.maxLife) {
-            steam.position.set(
-                -2.3 + (Math.random() - 0.5) * 0.5,
-                1.3 + Math.random() * 0.3,
-                -2 + (Math.random() - 0.5) * 0.5
-            );
-            steam.userData.life = 0;
-            steam.userData.velocity.set(
-                (Math.random() - 0.5) * 0.3,
-                0.3 + Math.random() * 0.3,
-                (Math.random() - 0.5) * 0.3
-            );
-            steam.material.opacity = 0.15;
-            steam.scale.setScalar(1);
-        }
-    })
-}
-
-// Создание печи-каменки
-function createStove() {
-    const stoveGroup = new THREE.Group();
-    const stoveInnerGroup = new THREE.Group();
-
-    // Основание печи
-    const baseGeometry = new THREE.BoxGeometry(0.8, 0.9, 0.6);
-    const stoveMaterial = new THREE.MeshStandardMaterial({
-        color: 0x252525,
-        roughness: 0.6,
-        metalness: 0.9
-    });
-    const base = new THREE.Mesh(baseGeometry, stoveMaterial);
-    base.position.set(-2.3, 0.45, -2);
-    base.castShadow = true;
-    base.receiveShadow = true;
-    base.interactionObject = stoveGroup;
-    stoveInnerGroup.add(base);
-
-    // Топка (с дверцей)
-    const doorGeometry = new THREE.BoxGeometry(0.35, 0.25, 0.05);
-    const doorMaterial = new THREE.MeshStandardMaterial({
-        color: 0x1a1a1a,
-        roughness: 0.5,
-        metalness: 0.95
-    });
-    const door = new THREE.Mesh(doorGeometry, doorMaterial);
-    door.position.set(-2.3, 0.35, -1.67);
-    door.interactionObject = stoveGroup;
-    stoveInnerGroup.add(door);
-
-    // Свечение из топки
-    const glowGeometry = new THREE.PlaneGeometry(0.3, 0.2);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff4400,
-        transparent: true,
-        opacity: 0.8
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    glow.position.set(-2.3, 0.35, -1.66);
-    glow.interactionObject = stoveGroup;
-    stoveInnerGroup.add(glow);
-
-
-    // Контейнер для камней
-    const meshTexture = createMeshTexture('#302c29ff');
-    const containerMaterial = new THREE.MeshStandardMaterial({
-        map: meshTexture,
-        transparent: true,
-        opacity: 1,
-        side: THREE.DoubleSide,
-        roughness: 0.6,
-        metalness: 0.9
-    });
-    const stonesContainerGeometry = new THREE.CylinderGeometry(0.45, 0.3, 0.3, 24, 1, true);
-    const stonesContainer = new THREE.Mesh(stonesContainerGeometry, containerMaterial);
-    stonesContainer.position.set(-2.3, 1.1, -2);
-    stonesContainer.castShadow = true;
-    stonesContainer.interactionObject = stoveGroup;
-    stoveInnerGroup.add(stonesContainer);
-
-    // Камни
-    for (let i = 0; i < 25; i++) {
-        const stoneGeometry = new THREE.DodecahedronGeometry(0.08 + Math.random() * 0.03, 0);
-        const stoneMaterial = new THREE.MeshStandardMaterial({
-            color: new THREE.Color().setHSL(0.05 + Math.random() * 0.05, 0.2, 0.25 + Math.random() * 0.15),
-            roughness: 0.8,
-            metalness: 0.1
-        });
-        const stone = new THREE.Mesh(stoneGeometry, stoneMaterial);
-        // const angle = Math.random() * Math.PI * 2;
-        // const radius = Math.random() * 0.38;
-        // stone.position.set(
-        //     -2.3 + Math.cos(angle) * radius,
-        //     1.0 + Math.random() * 0.3,
-        //     -2 + Math.sin(angle) * radius
-        // );
-        const height = 0.3/25*(i+1);
-        const angle = 159*Math.PI/25*(i+5);
-        const radius = 0.25;
-        stone.position.set(
-            -2.3 + Math.cos(angle) * radius,
-            1.0 + height,
-            -2 + Math.sin(angle) * radius
-        );
-        stone.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-        stone.castShadow = true;
-        stone.interactionObject = stoveGroup;
-        stoveInnerGroup.add(stone);
-    }
-
-    // Труба
-    const pipeGeometry = new THREE.CylinderGeometry(0.12, 0.15, 2, 12);
-    const pipe = new THREE.Mesh(pipeGeometry, stoveMaterial);
-    pipe.position.set(-2.3, 2.05, -2);
-    pipe.castShadow = true;
-    pipe.interactionObject = stoveGroup;
-    stoveInnerGroup.add(pipe);
-
-    
-    // Свет от печи
-    const stoveLight = new THREE.PointLight(0xff6622, 1.5, 4);
-    stoveLight.position.set(-2.3, 1.5, -2);
-    stoveLight.castShadow = true;
-    stoveInnerGroup.add(stoveLight);
-
-    // Отражённый свет от горячих камней
-    const stoneGlow = new THREE.PointLight(0xff6633, 0.4, 2);
-    stoneGlow.position.set(-2.3, 1.3, -2);
-    stoveInnerGroup.add(stoneGlow);
-
-    createSteam(stoveInnerGroup, stoveGroup);
-
-    const bbox = new THREE.Box3().setFromObject(stoveInnerGroup);
-    stoveInnerGroup.position.set(-(bbox.min.x + bbox.max.x) / 2, -(bbox.min.y + bbox.max.y) / 2, -(bbox.min.z + bbox.max.z) / 2);
-    stoveGroup.add(stoveInnerGroup);
-    stoveGroup.position.set((bbox.min.x + bbox.max.x) / 2, (bbox.min.y + bbox.max.y) / 2, (bbox.min.z + bbox.max.z) / 2);
-    stoveGroup.interactable = true;
-    scene.add(stoveGroup);
-}
-
-// Создание лавок
-function createBench(physics) {
-    new Bench2(
-        scene,
-        physics,
-        new THREE.Vector3(0, 0.6, -1.75),
-        new THREE.Euler(0, Math.PI, 0)
-    )
-    new Bench(
-        scene,
-        physics,
-        new THREE.Vector3(-2.6, 0.56, -0.2),
-        new THREE.Euler(0, Math.PI/2, 0)
-    )
-}
-
-// Создание аксессуаров
-function createAccessories(physics) {
-    new Bucket(
-        scene,
-        physics,
-        new THREE.Vector3(-1.24, 0.32, -2.15),
-        new THREE.Euler(0, Math.PI * 1.2,0)
-    )
-
-    // Часы на стене
-    const clockGroup = new THREE.Group();
-    
-    const clockFaceGeometry = new THREE.CircleGeometry(0.15, 32);
-    const clockMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.5 });
-    const clockFace = new THREE.Mesh(clockFaceGeometry, clockMaterial);
-    clockFace.position.set(0, 2.2, -2.48);
-    clockGroup.add(clockFace);
-
-    // Рамка часов
-    const clockFrameGeometry = new THREE.TorusGeometry(0.15, 0.015, 8, 32);
-    const clockFrameMaterial = new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.6 });
-    const clockFrame = new THREE.Mesh(clockFrameGeometry, clockFrameMaterial);
-    clockFrame.position.set(0, 2.2, -2.48);
-    clockGroup.add(clockFrame);
-
-    // Стрелки
-    const hourHandGeo = new THREE.BoxGeometry(0.08, 0.015, 0.003);
-    const handMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
-    const hourHand = new THREE.Mesh(hourHandGeo, handMaterial);
-    hourHand.position.set(0.03, 2.2, -2.47);
-    clockGroup.add(hourHand);
-
-    const minuteHandGeo = new THREE.BoxGeometry(0.12, 0.01, 0.003);
-    const minuteHand = new THREE.Mesh(minuteHandGeo, handMaterial);
-    minuteHand.position.set(0.025, 2.24, -2.47);
-    minuteHand.rotation.z = Math.PI / 4;
-    clockGroup.add(minuteHand);
-
-    scene.add(clockGroup);
-
-    // Термометр
-    const thermometerGroup = new THREE.Group();
-    
-    const thermoBodyGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.25, 12);
-    const thermoMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0xffffff, 
-        transparent: true, 
-        opacity: 0.7,
-        roughness: 0.1 
-    });
-    const thermoBody = new THREE.Mesh(thermoBodyGeometry, thermoMaterial);
-    thermoBody.position.set(-1.5, 2, -2.48);
-    thermometerGroup.add(thermoBody);
-
-    // Ртуть (температура высокая)
-    const mercuryGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.18, 12);
-    const mercuryMaterial = new THREE.MeshStandardMaterial({ color: 0xff3333 });
-    const mercury = new THREE.Mesh(mercuryGeometry, mercuryMaterial);
-    mercury.position.set(-1.5, 1.98, -2.47);
-    thermometerGroup.add(mercury);
-
-    scene.add(thermometerGroup);
-}
 
 // Создание освещения
 function createLighting() {
     // Ambient light (мягкое освещение)
-    const ambientLight = new THREE.AmbientLight(0xff9966, 0.5);
+    const ambientLight = new THREE.AmbientLight(0xff9966, 1);
     scene.add(ambientLight);
 
     // Дополнительное тёплое освещение сверху
-    const ceilingLight = new THREE.PointLight(0xff8844, 2.0, 6);
-    ceilingLight.position.set(0, 2.7, 1);
-    ceilingLight.castShadow = true;
-    scene.add(ceilingLight);
+    // const ceilingLight = new THREE.PointLight(0xff8844, 2.0, 6);
+    // ceilingLight.position.set(0, 2.7, 1);
+    // ceilingLight.castShadow = true;
+    // scene.add(ceilingLight);
 
-}
-
-
-function createPhysicsWalls(physics) {
-    const RAPIER = physics.RAPIER;
-    const rapierWorld = physics.world;
-    // Размеры парилки (из createSauna)
-    const width = 6;
-    const height = 3;
-    const depth = 5;
-    
-    // === Пол ===
-    const floorDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(0, 0, 0);
-    const floorBody = rapierWorld.createRigidBody(floorDesc);
-    const floorColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.01, depth / 2);
-    rapierWorld.createCollider(floorColliderDesc, floorBody);
-    
-    // === Потолок ===
-    const ceilingDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(0, height, 0);
-    const ceilingBody = rapierWorld.createRigidBody(ceilingDesc);
-    const ceilingColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.01, depth / 2)
-    rapierWorld.createCollider(ceilingColliderDesc, ceilingBody);
-    
-    // === Задняя стена ===
-    const backWallDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(0, height / 2, -depth / 2);
-    const backWallBody = rapierWorld.createRigidBody(backWallDesc);
-    const backWallColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, height / 2, 0.01);
-    rapierWorld.createCollider(backWallColliderDesc, backWallBody);
-    
-    // // === Левая стена ===
-    const leftWallDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(-width / 2, height / 2, 0);
-    const leftWallBody = rapierWorld.createRigidBody(leftWallDesc);
-    const leftWallColliderDesc = RAPIER.ColliderDesc.cuboid(0.01, height / 2, depth / 2);
-    rapierWorld.createCollider(leftWallColliderDesc, leftWallBody);
-    
-    // // === Правая стена ===
-    const rightWallDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(width / 2, height / 2, 0);
-    const rightWallBody = rapierWorld.createRigidBody(rightWallDesc);
-    const rightWallColliderDesc = RAPIER.ColliderDesc.cuboid(0.01, height / 2, depth / 2);
-    rapierWorld.createCollider(rightWallColliderDesc, rightWallBody);
-    
-    // === Передняя стена ===
-    const frontWallDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(0, height / 2, depth / 2);
-    const frontWallBody = rapierWorld.createRigidBody(frontWallDesc);
-    const frontWallColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, height / 2, 0.01);
-    rapierWorld.createCollider(frontWallColliderDesc, frontWallBody);
-
-
-    // // === Передняя стена (с дверью) ===
-    // // Левая часть передней стены
-    // const leftFrameOffset = 1.2;
-    // const frontLeftDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(leftFrameOffset / 2 - width / 4, (height - 0.8) / 2, depth / 2));
-    // const frontLeftBody = rapierWorld.createRigidBody(frontLeftDesc);
-    // const frontLeftColliderDesc = RAPIER.ColliderDesc.cuboid(width / 4 + leftFrameOffset / 2, (height - 0.8) / 2, 0.01);
-    // rapierWorld.createCollider(frontLeftColliderDesc, frontLeftBody);
-    
-    // // Правая часть передней стены
-    // const rightFrameOffset = 2.4;
-    // const frontRightDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(rightFrameOffset / 2 + width / 4, (height - 0.8) / 2, depth / 2));
-    // const frontRightBody = rapierWorld.createRigidBody(frontRightDesc);
-    // const frontRightColliderDesc = RAPIER.ColliderDesc.cuboid(width / 4 - rightFrameOffset / 2, (height - 0.8) / 2, 0.01);
-    // rapierWorld.createCollider(frontRightColliderDesc, frontRightBody);
-    
-    // // Верхняя часть над дверью
-    // const frontTopDesc = RAPIER.RigidBodyDesc.fixed(rapierVec(0, height - 0.4, depth / 2));
-    // const frontTopBody = rapierWorld.createRigidBody(frontTopDesc);
-    // const frontTopColliderDesc = RAPIER.ColliderDesc.cuboid(width / 2, 0.4, 0.01);
-    // rapierWorld.createCollider(frontTopColliderDesc, frontTopBody);
-}
-
-function addLogValue(log_div, row_title) {
-    const log_row = document.createElement('p');
-    const log_title = document.createElement('span');
-    log_title.innerHTML = row_title;
-    log_row.appendChild(log_title);
-    const log_value = document.createElement('span');
-    log_row.appendChild(log_value);
-    log_values.set(row_title, log_value);
-    log_div.appendChild(log_row);
-}
-
-function setLogValue(row_title, val) {
-    if (log_values.has(row_title)) log_values.get(row_title).innerHTML = val.toFixed(3);
-}
-
-function createLog() {
-    const log_div = document.createElement('div');
-    log_div.setAttribute('id', 'log');
-    log_div.classList.add('hidden');
-
-    addLogValue(log_div, 'camera.position.x');
-    addLogValue(log_div, 'camera.position.y');
-    addLogValue(log_div, 'camera.position.z'); 
-    addLogValue(log_div, 'velocity.x');
-    addLogValue(log_div, 'velocity.z');
-    addLogValue(log_div, 'direction.x');
-    addLogValue(log_div, 'direction.z');
-    addLogValue(log_div, 'euler.x');
-    addLogValue(log_div, 'euler.y');
-    addLogValue(log_div, 'camera.rotation.x');
-    addLogValue(log_div, 'camera.rotation.y');
-    addLogValue(log_div, 'camera.rotation.z');
-
-    document.body.appendChild(log_div);
-}
-
-function rotateCamera(movementX, movementY, sensitivity) {
-    if (movementX == 0 && movementY == 0) return;
-
-    // Применяем вращение к Euler углам
-    euler.setFromQuaternion(camera.quaternion);
-
-    // Горизонтальное вращение (вокруг оси Y)
-    euler.y -= movementX * sensitivity;
-    // Вертикальное вращение (вокруг оси X)
-    euler.x -= movementY * sensitivity;
-
-    // Ограничение вертикального вращения
-    euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x));
-
-    // Применяем к камере
-    camera.quaternion.setFromEuler(euler);
-    
-    if (enableLog) {
-        setLogValue('euler.x', euler.x);
-        setLogValue('euler.y', euler.y);
-        setLogValue('camera.rotation.x', camera.rotation.x);
-        setLogValue('camera.rotation.y', camera.rotation.y);
-        setLogValue('camera.rotation.z', camera.rotation.z);
-    }
 }
 
 // Настройка управления
@@ -697,16 +134,14 @@ function setupControls(objectSelector) {
         
         if (isLocked) {
             document.getElementById('click-to-start').classList.add('hidden');
-            document.getElementById('instructions').classList.remove('hidden');
+            // document.getElementById('instructions').classList.remove('hidden');
             document.getElementById('crosshair').classList.remove('hidden');
             document.getElementById('temp-indicator').classList.remove('hidden');
-            if (enableLog) document.getElementById('log').classList.remove('hidden');
         } else {
             document.getElementById('click-to-start').classList.remove('hidden');
             document.getElementById('instructions').classList.add('hidden');
             document.getElementById('crosshair').classList.add('hidden');
             document.getElementById('temp-indicator').classList.add('hidden');
-            if (enableLog) document.getElementById('log').classList.add('hidden');
             objectSelector.disable();
         }
     });
@@ -718,7 +153,7 @@ function setupControls(objectSelector) {
             objectSelector.rotate(event.movementX || 0, event.movementY || 0, mouseSensitivity);
             return;
         }
-        rotateCamera(event.movementX || 0, event.movementY || 0, mouseSensitivity);
+        sceneObj.rotateCamera(event.movementX || 0, event.movementY || 0, mouseSensitivity);
     });
 
     document.addEventListener('touchstart', (event) => {
@@ -737,7 +172,7 @@ function setupControls(objectSelector) {
             touchActivity.x = touch.screenX;
             touchActivity.y = touch.screenY;
             // Для касаний - обратное направление поворота, чтобы совпадало с направлением движения пальца
-            rotateCamera(-dx, -dy, touchSensitivity);
+            sceneObj.rotateCamera(-dx, -dy, touchSensitivity);
         }
     });
     document.addEventListener('touchend', (event) => {
@@ -821,8 +256,7 @@ function setupControls(objectSelector) {
                 break;
             case 'KeyN':
                 try {
-                    physics.toggleDebug(scene);
-
+                    physics.toggleDebug();
                 } catch (e) {console.log(e)}
                 break;
         }
@@ -862,116 +296,39 @@ function animate(time) {
 
     // === Установка скорости игрока на основе ввода ===
     if (physics.player) {
+        const maxSpeed = 3;
         // Вычисляем направление движения на основе ввода
-        direction.z = Number(moveForward) - Number(moveBackward);
-        direction.x = Number(moveRight) - Number(moveLeft);
-        direction.normalize();
-        
-        // Параметры движения
-        // const acceleration = 20.0;
-        const maxSpeed = 3.0;      // Максимальная скорость движения
-        const deceleration = 15.0; // Замедление при отсутствии ввода
-        
-        if (!physics.player.isValid) {
-            console.log('player body does not have isValid')
-        } else if (!physics.player.isValid()) {
-            console.log('player body is not valid')
-        }
-        // Текущая скорость
+        const direction = new THREE.Vector3(
+            Number(moveLeft) - Number(moveRight),
+            0,
+            Number(moveForward) - Number(moveBackward),
+        ).normalize().multiplyScalar(maxSpeed);
+
+        camera.updateMatrixWorld();
+        const cameraQuaternion = camera.getWorldQuaternion(new THREE.Quaternion());
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cameraQuaternion);
+        forward.y = 0;
+        forward.normalize();
+        const yAngle = Math.atan2(forward.x, forward.z);
+        const cameraYQuaternion = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            yAngle
+        );
+
+        const interpolationFactor = 0.15;
         const currentLinvel = physics.player.linvel();
-        
-        // Вектор "вперёд" относительно направления взгляда камеры
-        const cameraDirection = new THREE.Vector3();
-        camera.getWorldDirection(cameraDirection);
-        cameraDirection.y = 0;  // Движение строго в плоскости XZ
-        cameraDirection.normalize();
-        
-        // Вектор "вправо" относительно камеры
-        const cameraRight = new THREE.Vector3();
-        cameraRight.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0));
-        cameraRight.normalize();
-        
-        // Желаемая скорость
-        const desiredVelocity = {
-            x: 0,
-            y: currentLinvel.y, // Сохраняем вертикальную скорость (гравитацию)
-            z: 0
-        };
-        
-        // Применяем ускорение
-        // const speed = acceleration * delta;
-        
-        if (moveForward || moveBackward) {
-            desiredVelocity.x += cameraDirection.x * velocity.z;
-            desiredVelocity.z += cameraDirection.z * velocity.z;
-        } else {
-            // Плавное замедление при отпускании клавиш
-            velocity.z *= Math.max(0, 1 - deceleration * delta);
-            if (Math.abs(velocity.z) < 0.01) velocity.z = 0;
-        }
-        
-        if (moveLeft || moveRight) {
-            desiredVelocity.x += cameraRight.x * velocity.x;
-            desiredVelocity.z += cameraRight.z * velocity.x;
-        } else {
-            velocity.x *= Math.max(0, 1 - deceleration * delta);
-            if (Math.abs(velocity.x) < 0.01) velocity.x = 0;
-        }
-        
-        // Ограничиваем максимальную скорость
-        const speed2D = Math.sqrt(currentLinvel.x ** 2 + currentLinvel.z ** 2);
-        if (speed2D > maxSpeed) {
-            const scale = maxSpeed / speed2D;
-            desiredVelocity.x = currentLinvel.x * scale;
-            desiredVelocity.z = currentLinvel.z * scale;
-        }
-        
-        // Обновляем скорость на основе ввода
-        let targetVelocityX = 0;
-        let targetVelocityZ = 0;
-        
-        if (moveForward || moveBackward) {
-            targetVelocityX += cameraDirection.x * direction.z * maxSpeed;
-            targetVelocityZ += cameraDirection.z * direction.z * maxSpeed;
-        }
-        
-        if (moveLeft || moveRight) {
-            targetVelocityX += cameraRight.x * direction.x * maxSpeed;
-            targetVelocityZ += cameraRight.z * direction.x * maxSpeed;
-        }
-        
-        // Плавная интерполяция скорости (чтобы не было рывков)
-        const interpolationFactor = 0.15; // Меньше = плавнее, но медленнее реакция
-        desiredVelocity.x = currentLinvel.x + (targetVelocityX - currentLinvel.x) * interpolationFactor;
-        desiredVelocity.z = currentLinvel.z + (targetVelocityZ - currentLinvel.z) * interpolationFactor;
-        
-        // Устанавливаем скорость тела
-        physics.player.setLinvel(desiredVelocity, true);
+        const targetVelocity = new THREE.Vector3(0, currentLinvel.y, 0).add(direction).applyQuaternion(cameraYQuaternion);
+        const newVelocity = new THREE.Vector3(currentLinvel.x, currentLinvel.y, currentLinvel.z).lerp(targetVelocity, interpolationFactor);
+
+        physics.player.setLinvel(newVelocity, true);
     }
+    if (isLocked) objectSelector.update(delta);
 
     if (objectSelector.pickedUp) physics.updateBodyFromThree(objectSelector.selected);
 
     physics.update(delta);
-
-
-    if (isLocked) objectSelector.update(delta);
-
-
-    // === Синхронизация динамических объектов ===
     
-    
-
-
-    animateSteam(delta);
-    updatedObjects.forEach(obj => obj.update(delta))
-
-    // Лёгкое мерцание света от печи
-    const stoveLights = scene.children.filter(c => c.type === 'PointLight' && c.position.x === -2.3);
-    stoveLights.forEach(light => {
-        if (light.position.y > 1.4) {
-            light.intensity = 1.2 + Math.sin(Date.now() * 0.003) * 0.3 + Math.random() * 0.2;
-        }
-    });
+    sceneObj.update(delta);
 
     sceneObj.render();
 }
