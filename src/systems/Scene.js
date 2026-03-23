@@ -61,6 +61,14 @@ export default class Scene {
         if (typeof entity.update === 'function') this.updatedObjects.push(entity);
     }
 
+    remove(entity) {
+        this.scene.remove(entity.mesh);
+        if (typeof entity.update === 'function') {
+            const entityIdx = this.updatedObjects.indexOf(entity);
+            if (entityIdx > -1) this.updatedObjects.splice(entityIdx, 1);
+        }
+    }
+
     rotateCamera(movementX, movementY, sensitivity) {
         if (movementX == 0 && movementY == 0) return;
 

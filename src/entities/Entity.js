@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 
 export default class Entity {
+    scene
+    physics
     mesh
     physicsBody
     friction = 0.8 // Сила трения объекта
@@ -13,6 +15,8 @@ export default class Entity {
         rotation = new THREE.Euler(0, 0, 0),
         scale = 1,
     ) {
+        this.scene = scene;
+        this.physics = physics;
         if (this.initialize) this.initialize();
         // const meshPromise = this.createMesh().then(mesh => {
         this.createMesh().then(mesh => {
@@ -72,5 +76,10 @@ export default class Entity {
         const worldScale = mesh.getWorldScale(new THREE.Vector3());
         size.multiply(worldScale);
         return size;
+    }
+
+    destroy() {
+        if (this.physicsBody) this.physics.world.removeRigidBody(this.physicsBody);
+        this.scene.remove(this);
     }
 }

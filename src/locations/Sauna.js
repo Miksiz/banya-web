@@ -1,18 +1,58 @@
-export default class Sauna {
-    constructor(scene, camera) {
-        this.scene = scene;
-        this.camera = camera;
+import * as THREE from 'three';
+
+import Location from './Location.js';
+import Bucket from '../entities/Bucket.js';
+import Bench from '../entities/Bench.js';
+import Bench2 from '../entities/Bench2.js';
+import Stove from '../entities/Stove.js';
+import SaunaBox from '../entities/SaunaBox.js';
+import Clock from '../entities/Clock.js';
+import Thermometer from '../entities/Thermometer.js';
+
+export default class Sauna extends Location {
+    initialize() {
+        this.entityMap = [
+            {entityClass: SaunaBox, position: [0, 0, 0], rotation: [0, 0, 0]},
+            {entityClass: Stove, position: [-2.34, 0.53, -1.85], rotation: [0, Math.PI/4, 0]},
+            {entityClass: Bench2, position: [0, 0.6, -1.75], rotation: [0, Math.PI, 0]},
+            {entityClass: Bench, position: [-2.6, 0.56, 0.1], rotation: [0, Math.PI/2, 0]},
+            {entityClass: Clock, position: [0.0, 2.2, -2.48], rotation: [0, 0, 0]},
+            {entityClass: Thermometer, position: [-1.5, 2, -2.48], rotation: [0, 0, 0]},
+            {entityClass: Bucket, position: [-1.24, 0.32, -2.15], rotation: [0, Math.PI * 1.2,0]},
+        ];
     }
 
-    init() {
-        this.scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
-        this.scene.background = new THREE.Color(0x966b4b);
-        this.camera.position.set(0, 0, 0);
+    setupScene() {
+        this.scene.scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
+        this.scene.scene.background = new THREE.Color(0x966b4b);
+        this.scene.camera.position.set(0, 1.7, 0);
+        this.scene.camera.rotation.set(-0.29545682714528293, 0.44456224808150424, 0.130156176817663);
+        // this.scene.camera.rotation.set(0,0,0);
+        this.createLighting();
     }
 
-    destoy() {
-        this.scene.fog = null;
-        this.scene.background = null;
+    restoreScene() {
+        this.scene.scene.fog = null;
+        this.scene.scene.background = null;
+        this.scene.camera.position.set(0, 0, 0);
+        this.scene.camera.rotation.set(0, 0, 0);
+        this.removeLighting();
     }
 
+
+    createLighting() {
+        // Ambient light (мягкое освещение)
+        this.ambientLight = new THREE.AmbientLight(0xff9966, 1);
+        this.scene.scene.add(this.ambientLight);
+
+        // Дополнительное тёплое освещение сверху
+        // const ceilingLight = new THREE.PointLight(0xff8844, 2.0, 6);
+        // ceilingLight.position.set(0, 2.7, 1);
+        // ceilingLight.castShadow = true;
+        // scene.add(ceilingLight);
+    }
+
+    removeLighting() {
+        this.scene.scene.remove(this.ambientLight);
+    }
 }

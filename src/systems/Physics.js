@@ -34,15 +34,17 @@ export default class Physics {
     cameraToBodyPosition
     scene
     debug
+    libraryInitialized
     initialized
     postInit
     rapierDebugRenderer
 
     constructor() {
+        this.initialized = false;
         this.debug = false;
         this.world = null;
         this.RAPIER = null;
-        this.initialized = new Promise((resolve, reject) => {
+        this.libraryInitialized = new Promise((resolve, reject) => {
             import('@dimforge/rapier3d')
             .then(
                 (RAPIER) => {
@@ -55,19 +57,18 @@ export default class Physics {
                 reject(error);
             });
         })
-        this.postInit = [this.initialized];
+        this.postInit = [this.libraryInitialized];
         this.rapierDebugRenderer = null;
     }
 
     atInit(fn) {
-        this.postInit.push(
-            this.initialized.then(() => { try { fn(this) } catch (error) { console.log(error) } })
-            // this.initialized.then(() => fn(this))
-        );
+        const atInitPromise = this.libraryInitialized.then(() => { try { fn(this) } catch (error) { console.log(error) } })
+        this.postInit.push(atInitPromise);
+        return atInitPromise;
     }
 
     createPlayer(height = 1.7, radius = 0.3, cameraToBodyPosition = { x: 0, y: 0.85, z: 0 }) {
-        this.atInit(() => this.createPlayerInner(height, radius, cameraToBodyPosition));
+        return this.atInit(() => this.createPlayerInner(height, radius, cameraToBodyPosition));
     }
 
     createPlayerInner(height, radius, cameraToBodyPosition) {
@@ -95,8 +96,14 @@ export default class Physics {
         this.world.createCollider(playerColliderDesc, this.player);
     }
 
+    destroyPlayer() {
+        this.world.removeRigidBody(this.player);
+        this.player = undefined;
+    }
+
     async init() {
         await Promise.allSettled(this.postInit);
+        this.initialized = true;
     }
 
     updateBodyFromThree(mesh) {
@@ -117,6 +124,7 @@ export default class Physics {
             mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
         })
         // Для тела игрока обновляется только позиция, без поворота камеры
+        if (!this.player) return;
         const position = this.player.translation();
         this.scene.camera.position.set(
             position.x + this.cameraToBodyPosition.x,

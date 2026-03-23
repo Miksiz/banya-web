@@ -90,6 +90,7 @@ export default class ObjectSelector {
     this.update_outlined_object();
   }
   deselect() {
+    if (this.pickedUp) this.putDown();
     this.selected = undefined;
     this.pickedUp = undefined;
     this.pickedRotating = undefined;
@@ -287,6 +288,7 @@ export default class ObjectSelector {
     if (!this.enabled) return;
     if (this.pickedUp) {
         this.moveSelectedObjectToCamera(delta);
+        this.physics.updateBodyFromThree(this.selected)
         return;
     }
     this.select();
