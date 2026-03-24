@@ -15,6 +15,7 @@ export default class Bench extends Entity {
         this.color = '#a0522d'
         this.seatMesh = undefined
         this.legMeshes = undefined
+        this.density = 20.0
     }
 
     async createMesh() {

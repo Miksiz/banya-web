@@ -45,7 +45,6 @@ export default class Bucket extends Entity {
             water.interactionObject = bucketGroup;
             bucketGroup.add(water);
         }
-
         return bucketGroup;
     }
 

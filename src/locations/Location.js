@@ -24,14 +24,18 @@ export default class Location {
         this.entities = entityArray.map(({entityClass, position, rotation}) => new entityClass(
                 this.scene,
                 this.physics,
+                this,
                 new THREE.Vector3(...position),
                 new THREE.Euler(...rotation),
             ));
     }
+
+    removeEntity(entity) {
+        const entityIdx = this.entities.indexOf(entity);
+        if (entityIdx > -1) this.entities.splice(entityIdx, 1);
+    }
     
     destroy() {
-        this.objectSelector.disable();
-
         while (this.entities.length > 0) {
             const entity = this.entities.pop();
             entity.destroy();

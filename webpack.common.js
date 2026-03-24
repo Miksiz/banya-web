@@ -15,6 +15,7 @@ export default {
     patterns: [
       { from: "./src/index.html", to: "index.html" },
       { from: "./src/style.css", to: "style.css" },
+      { from: "./src/favicon.ico", to: "favicon.ico" },
     ],
   }),],
   output: {

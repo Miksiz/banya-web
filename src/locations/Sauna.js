@@ -18,7 +18,7 @@ export default class Sauna extends Location {
             {entityClass: Bench, position: [-2.6, 0.56, 0.1], rotation: [0, Math.PI/2, 0]},
             {entityClass: Clock, position: [0.0, 2.2, -2.48], rotation: [0, 0, 0]},
             {entityClass: Thermometer, position: [-1.5, 2, -2.48], rotation: [0, 0, 0]},
-            {entityClass: Bucket, position: [-1.24, 0.32, -2.15], rotation: [0, Math.PI * 1.2,0]},
+            {entityClass: Bucket, position: [-1.28, 0.40, -2.10], rotation: [0, Math.PI * 1.2,0]},
         ];
     }
 
@@ -26,7 +26,7 @@ export default class Sauna extends Location {
         this.scene.scene.fog = new THREE.FogExp2(0x1a0a05, 0.04);
         this.scene.scene.background = new THREE.Color(0x966b4b);
         this.scene.camera.position.set(0, 1.7, 0);
-        this.scene.camera.rotation.set(-0.29545682714528293, 0.44456224808150424, 0.130156176817663);
+        this.scene.camera.rotation.set(-0.3539372590502969, 0.5705401158060064, 0.19697275212788495);
         // this.scene.camera.rotation.set(0,0,0);
         this.createLighting();
     }

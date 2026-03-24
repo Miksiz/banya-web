@@ -13,7 +13,8 @@ canvas {
 #instructions {
 	position: fixed;
 	top: 20px;
-	left: 20px;
+	left: 50%;
+	transform: translate(-50%, 0);
 	color: #e8c49a;
 	font-family: 'Segoe UI', Arial, sans-serif;
 	font-size: 14px;
@@ -83,7 +84,7 @@ canvas {
 }
 #click-to-start {
 	position: fixed;
-	top: 50%;
+	top: 70%;
 	left: 50%;
 	transform: translate(-50%, -50%);
 	color: #f4d9a0;

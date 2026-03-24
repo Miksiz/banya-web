@@ -27,6 +27,7 @@ export default class GameLoop {
 
     async init() {
         await this.physics.init();
+        console.log('Physics initialized')
         
         this.nextAnimationFrameRequestId = requestAnimationFrame(this.update.bind(this));
     }
@@ -39,11 +40,11 @@ export default class GameLoop {
     update(time) {
         this.nextAnimationFrameRequestId = requestAnimationFrame(this.update.bind(this));
         const delta = this.getDelta(time);
-
+        
         this.playerController.update(delta);
         this.objectSelector.update(delta);
-        this.physics.update(delta);
         this.scene.update(delta);
+        this.physics.update(delta);
         this.scene.render();
     }
 

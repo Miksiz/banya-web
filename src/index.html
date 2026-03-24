@@ -3,24 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Парилка - Вид от первого лица</title>
+    <title>В Бане</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
 	<link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="click-to-start">
         🧖 Нажмите, чтобы войти в парилку
     </div>
-    <div id="instructions" class="hidden">
-        <h3>💈 Парилка</h3>
+    <div id="instructions">
+        <h3>💈 Управление</h3>
         <p><strong>WASD / Стрелки</strong> — движение</p>
         <p><strong>Мышь / Свайп</strong> — осмотр</p>
-        <p><strong>C</strong> — режим взаимодействия</p>
+        <p><strong>C</strong> — выключить/включить режим взаимодействия</p>
+        <p><strong>J</strong> — пересоздать мир</p>
+        <p><strong>ESC</strong> — выйти из парилки</p>
+        <p>В режиме взаимодействия (по-умолчанию включен):</p>
         <p><strong>ЛКМ</strong> — взять/положить объект</p>
         <p><strong>Колёсико</strong> — отдалить/приблизить взятый объект</p>
-        <p><strong>ПКМ + движение</strong> — вращение объекта</p>
+        <p><strong>ПКМ + движение</strong> — вращение взятого объекта</p>
         <p><strong>Ср.кн.мыши</strong> — удалить объект</p>
-        <p><strong>X/Z</strong> — переключить оси вращения</p>
-        <p><strong>ESC</strong> — выйти</p>
+        <p><strong>X/Z</strong> — переключить оси вращения (чтобы при вращении вращать только во включенном направлении)</p>
+        <p><strong>N</strong> — переключение режима отладки физических коллайдеров</p>
+        <p><strong>M</strong> — записать в лог текущую позицию камеры</p>
+        <p><strong>B</strong> — записать в лог информацию о выбранном объекте</p>   
     </div>
     <div id="crosshair" class="hidden"></div>
     <div id="temp-indicator" class="hidden">🌡️ 85°C</div>

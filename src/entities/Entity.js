@@ -3,6 +3,7 @@ import * as THREE from 'three';
 export default class Entity {
     scene
     physics
+    location
     mesh
     physicsBody
     friction = 0.8 // Сила трения объекта
@@ -11,23 +12,27 @@ export default class Entity {
     constructor(
         scene,
         physics,
+        location,
         position = new THREE.Vector3(0, 0, 0),
         rotation = new THREE.Euler(0, 0, 0),
         scale = 1,
     ) {
         this.scene = scene;
         this.physics = physics;
+        this.location = location;
         if (this.initialize) this.initialize();
         // const meshPromise = this.createMesh().then(mesh => {
         this.createMesh().then(mesh => {
             this.mesh = mesh;
+            this.mesh.userData.entity = this;
             this.mesh.position.copy(position);
             this.mesh.setRotationFromEuler(rotation);
             this.mesh.scale.multiplyScalar(scale);
             this.mesh.updateMatrix();
             this.mesh.updateMatrixWorld(true);
             scene.add(this);
-            physics.atInit(this.createPhysics.bind(this));
+            physics.atInit(this.createPhysics.bind(this)).catch((e) => console.log(e));
+            // console.log("Mesh created for", this);
         })
         // this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
     }
@@ -62,6 +67,9 @@ export default class Entity {
                     .setRotation({ w: child.quaternion.w, x: child.quaternion.x, y: child.quaternion.y, z: child.quaternion.z })
                     .setFriction(this.friction)         // Трение дерева
                     .setRestitution(this.restitution);     // Небольшая упругость
+                if (this.density) {
+                    childColliderDesc.setDensity(this.density);
+                }
                 physics.world.createCollider(childColliderDesc, this.physicsBody);
             }
         });
@@ -81,5 +89,6 @@ export default class Entity {
     destroy() {
         if (this.physicsBody) this.physics.world.removeRigidBody(this.physicsBody);
         this.scene.remove(this);
+        this.location.removeEntity(this);
     }
 }

@@ -153,9 +153,9 @@ export default class Physics {
     }
 
     update(delta) {
-        this.updateSceneFromPhysics();
         this.world.timestep = delta;
         this.world.step();
+        this.updateSceneFromPhysics();
         if (this.rapierDebugRenderer) this.rapierDebugRenderer.update();
     }
 }

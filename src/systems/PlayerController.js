@@ -31,22 +31,24 @@ export default class PlayerController {
             x: undefined,
             y: undefined,
         };
+        this.objectSelectorLastState = true;
 
         this.setupPointerLockControls();
     }
 
     onPointerLockEnable() {
         document.getElementById('click-to-start').classList.add('hidden');
-        // document.getElementById('instructions').classList.remove('hidden');
+        document.getElementById('instructions').classList.add('hidden');
         document.getElementById('crosshair').classList.remove('hidden');
         document.getElementById('temp-indicator').classList.remove('hidden');
+        if (this.objectSelectorLastState) this.objectSelector.enable();
 
         this.setupMovementControls();
     }
 
     onPointerLockDisable() {
         document.getElementById('click-to-start').classList.remove('hidden');
-        document.getElementById('instructions').classList.add('hidden');
+        document.getElementById('instructions').classList.remove('hidden');
         document.getElementById('crosshair').classList.add('hidden');
         document.getElementById('temp-indicator').classList.add('hidden');
         this.objectSelector.disable();
@@ -155,6 +157,7 @@ export default class PlayerController {
                 break;
             case 'KeyC':
                 this.objectSelector.toggle();
+                this.objectSelectorLastState = !this.objectSelectorLastState;
                 break;
             case 'KeyX':
                 this.objectSelector.toggleHorizontalRotation();

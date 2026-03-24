@@ -43,7 +43,9 @@ export default class Clock extends Entity {
     createPhysics(physics) {
         const bodyDesc = physics.RAPIER.RigidBodyDesc.fixed()
             .setTranslation(...this.mesh.position)
-            .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z});
+            .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z})
+            .setLinearDamping(0.5)     // Сопротивление движению
+            .setAngularDamping(100.5);
 
         const body = physics.world.createRigidBody(bodyDesc);
         this.physicsBody = body;
