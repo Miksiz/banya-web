@@ -24,7 +24,7 @@ export default class SaunaBox extends Entity {
         const wallTexture = createWoodTexture(this.wallColor);
         const ceilingTexture = createWoodTexture(this.ceilingColor);
         const floorTexture = createWoodTexture(this.floorColor);
-        const doorTexture = createWoodTexture(this.doorColor);
+        // const doorTexture = createWoodTexture(this.doorColor);
 
         // Пол
         const floorGeometry = new THREE.PlaneGeometry(this.width, this.depth);
@@ -138,12 +138,14 @@ export default class SaunaBox extends Entity {
         leftFrame.receiveShadow = true;
         leftFrame.castShadow = true;
         group.add(leftFrame);
+        this.boxParts.push(leftFrame);
         
         const rightFrame = new THREE.Mesh(frameGeo, doorFrameMaterial);
         rightFrame.position.set(this.rightFrameOffset, 1.1, this.depth / 2);
         rightFrame.receiveShadow = true;
         rightFrame.castShadow = true;
         group.add(rightFrame);
+        this.boxParts.push(rightFrame);
         
         // Горизонтальная часть рамы
         const topFrame = new THREE.Mesh(
@@ -154,34 +156,36 @@ export default class SaunaBox extends Entity {
         topFrame.receiveShadow = true;
         topFrame.castShadow = true;
         group.add(topFrame);
+        this.boxParts.push(topFrame);
 
-        // Дверь
-        const doorGeometry = new THREE.PlaneGeometry(this.rightFrameOffset-this.leftFrameOffset, 2.2);
-        const doorMaterial = new THREE.MeshStandardMaterial({
-            map: doorTexture,
-            roughness: 0.9,
-            metalness: 0.05
-        });
-        const door = new THREE.Mesh(doorGeometry, doorMaterial);
-        door.position.set((this.rightFrameOffset+this.leftFrameOffset)/2, 1.1, this.depth / 2 - 0.01);
-        door.rotation.y = Math.PI;
-        door.receiveShadow = true;
-        group.add(door);
-        this.boxParts.push(door);
+        // // Дверь
+        // const doorGeometry = new THREE.PlaneGeometry(this.rightFrameOffset-this.leftFrameOffset, 2.2);
+        // const doorMaterial = new THREE.MeshStandardMaterial({
+        //     map: doorTexture,
+        //     roughness: 0.9,
+        //     metalness: 0.05
+        // });
+        // const door = new THREE.Mesh(doorGeometry, doorMaterial);
+        // door.position.set((this.rightFrameOffset+this.leftFrameOffset)/2, 1.1, this.depth / 2 - 0.01);
+        // door.rotation.y = Math.PI;
+        // door.receiveShadow = true;
+        // group.add(door);
+        // this.boxParts.push(door);
 
-        // Дверная ручка
-        const handleGeometry = new THREE.CylinderGeometry(0.03, 0.03, 0.15, 8);
-        const handle = new THREE.Mesh(handleGeometry, doorFrameMaterial);
-        handle.rotation.x = Math.PI / 2;
-        handle.position.set(this.rightFrameOffset-0.18, 1.1, this.depth / 2 - 0.05);
-        handle.receiveShadow = true;
-        handle.castShadow = true;
-        group.add(handle);
+        // // Дверная ручка
+        // const handleGeometry = new THREE.CylinderGeometry(0.03, 0.03, 0.15, 8);
+        // const handle = new THREE.Mesh(handleGeometry, doorFrameMaterial);
+        // handle.rotation.x = Math.PI / 2;
+        // handle.position.set(this.rightFrameOffset-0.18, 1.1, this.depth / 2 - 0.05);
+        // handle.receiveShadow = true;
+        // handle.castShadow = true;
+        // group.add(handle);
 
         return group;   
     }
 
-    createPhysics(physics) {
+    createPhysics() {
+        const physics = this.physics;
         const bodyDesc = physics.RAPIER.RigidBodyDesc.fixed()
             .setTranslation(...this.mesh.position)
             .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z});

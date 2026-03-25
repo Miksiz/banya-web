@@ -48,7 +48,8 @@ export default class Bucket extends Entity {
         return bucketGroup;
     }
 
-    createPhysics(physics) {
+    createPhysics() {
+        const physics = this.physics;
         // === Добавляем физику для ведра ===
         // Вычисляем bounding box для точных размеров
         const bbox = new THREE.Box3().setFromObject(this.mesh);

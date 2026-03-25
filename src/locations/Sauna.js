@@ -8,11 +8,13 @@ import Stove from '../entities/Stove.js';
 import SaunaBox from '../entities/SaunaBox.js';
 import Clock from '../entities/Clock.js';
 import Thermometer from '../entities/Thermometer.js';
+import Door from '../entities/Door.js';
 
 export default class Sauna extends Location {
     initialize() {
-        this.entityMap = [
+        this.entityDesctiptions = [
             {entityClass: SaunaBox, position: [0, 0, 0], rotation: [0, 0, 0]},
+            {entityClass: Door, position: [1.8, 1.1, 2.5], rotation: [0, Math.PI, 0], dependsOn: [[SaunaBox, 0]]},
             {entityClass: Stove, position: [-2.34, 0.53, -1.85], rotation: [0, Math.PI/4, 0]},
             {entityClass: Bench2, position: [0, 0.6, -1.75], rotation: [0, Math.PI, 0]},
             {entityClass: Bench, position: [-2.6, 0.56, 0.1], rotation: [0, Math.PI/2, 0]},

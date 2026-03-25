@@ -40,7 +40,8 @@ export default class Clock extends Entity {
         return group;   
     }
 
-    createPhysics(physics) {
+    createPhysics() {
+        const physics = this.physics;
         const bodyDesc = physics.RAPIER.RigidBodyDesc.fixed()
             .setTranslation(...this.mesh.position)
             .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z})

@@ -5,6 +5,7 @@ export default class Entity {
     physics
     location
     mesh
+    physicsInitialization
     physicsBody
     friction = 0.8 // Сила трения объекта
     restitution = 0.1 // Упругость объекта
@@ -15,14 +16,15 @@ export default class Entity {
         location,
         position = new THREE.Vector3(0, 0, 0),
         rotation = new THREE.Euler(0, 0, 0),
+        dependencies = new Array(),
         scale = 1,
     ) {
         this.scene = scene;
         this.physics = physics;
         this.location = location;
+        this.dependencies = dependencies;
         if (this.initialize) this.initialize();
-        // const meshPromise = this.createMesh().then(mesh => {
-        this.createMesh().then(mesh => {
+        const meshPromise = this.createMesh().then(mesh => {
             this.mesh = mesh;
             this.mesh.userData.entity = this;
             this.mesh.position.copy(position);
@@ -31,17 +33,20 @@ export default class Entity {
             this.mesh.updateMatrix();
             this.mesh.updateMatrixWorld(true);
             scene.add(this);
-            physics.atInit(this.createPhysics.bind(this)).catch((e) => console.log(e));
-            // console.log("Mesh created for", this);
         })
-        // this.physicsPromise = Promise.all([meshPromise, rapierPromise]).then(([_, {RAPIER, rapierWorld}]) => this.createPhysics(RAPIER, rapierWorld))
+        const waitFor = this.dependencies.map(dep => dep.physicsInitialization);
+        waitFor.push(physics.libraryInitialized);
+        waitFor.push(meshPromise);
+        this.physicsInitialization = Promise.allSettled(waitFor).then(this.createPhysics.bind(this)).catch((e) => console.log(e));
+        physics.postInit.push(this.physicsInitialization);
     }
 
     async createMesh() {
         throw new Error("Method 'createMesh()' must be implemented.");
     }
     
-    createPhysics(physics) {
+    createPhysics() {
+        const physics = this.physics;
         // Вычисляем bounding box для точных размеров
         const bbox = new THREE.Box3().setFromObject(this.mesh);
         var size = bbox.getSize(new THREE.Vector3());

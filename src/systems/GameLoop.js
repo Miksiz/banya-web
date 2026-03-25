@@ -55,6 +55,7 @@ export default class GameLoop {
 
     unloadLocation() {
         if (!this.location) return;
+        if (this.objectSelector.pickedUp) this.objectSelector.putDown();
         this.location.destroy();
         this.location = null;
     }
