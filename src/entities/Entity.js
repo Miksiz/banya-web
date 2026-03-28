@@ -28,6 +28,7 @@ export default class Entity {
             this.mesh = mesh;
             this.mesh.userData.entity = this;
             this.mesh.position.copy(position);
+            if (this?.preferredPosition) this.preferredPosition = this.preferredPosition.add(position);
             this.mesh.setRotationFromEuler(rotation);
             this.mesh.scale.multiplyScalar(scale);
             this.mesh.updateMatrix();

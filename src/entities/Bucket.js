@@ -67,9 +67,18 @@ export default class Bucket extends Entity {
         this.physicsBody = bucketBody;
         bucketBody.userData = { mesh: this.mesh };
 
-        // Создаём коллайдер (ящик вместо точной формы для производительности)
-        const bucketColliderDesc = physics.RAPIER.ColliderDesc.cylinder(size.y * 0.9 / 2, size.x * 0.65 / 2)
-            .setTranslation(0.025, -0.02, 0.0)
+        const bucketPoints = [
+            [0, -0.297],
+            [0.24, -0.297],
+            [0.267, 0.2262],
+            [0.231, 0.2262],
+            [0.20811, -0.26238],
+            [0, -0.26238],
+        ].map(([x, y]) => new THREE.Vector2(x, y));
+
+        const bucketGeometry = new THREE.LatheGeometry(bucketPoints, 12);
+        const bucketColliderDesc = physics.RAPIER.ColliderDesc.trimesh(bucketGeometry.attributes.position.array, bucketGeometry.index.array)
+            .setTranslation(0.0219, 0, 0.003255)
             .setMass(1.0 + 5*this.waterFillAmount) // Масса в кг
             .setFriction(0.6)         // Трение дерева
             .setRestitution(0.2);     // Небольшая упругость
@@ -78,5 +87,6 @@ export default class Bucket extends Entity {
 
         this.mesh.userData.physicsBody = bucketBody;
         this.mesh.userData.isDynamic = true;
+        this.mesh.userData.rotationStrategy = "overTurn";
     }
 }

@@ -10,7 +10,8 @@ export default class Door extends Entity {
         this.doorColor = '#4b2d1bff';
         this.doorHandleColor = 0x8B4513;
         this.boxParts = [];
-        this.density = 20.0
+        this.density = 20.0;
+        this.preferredPosition = new THREE.Vector3(0,0,0);
     }
 
     async createMesh() {
@@ -81,5 +82,22 @@ export default class Door extends Entity {
         const jointData = physics.RAPIER.JointData.revolute(doorConnectionPosition, saunaConnectionPosition, revoluteVector)
 
         physics.world.createImpulseJoint(jointData, body, saunaBox.physicsBody, true);
+    }
+
+    update(delta) {
+        const currentPositionRp = this.physicsBody.translation();
+        const currentPosition = new THREE.Vector3(currentPositionRp.x, currentPositionRp.y, currentPositionRp.z);
+        const toPreferredPositionVec = new THREE.Vector3().copy(this.preferredPosition).sub(currentPosition);
+        const toPreferredPositionLength = toPreferredPositionVec.length();
+        if (toPreferredPositionLength < 0.01) {
+            return;
+        } else if (toPreferredPositionLength > 0.05) {
+            return;
+        }
+        const linVel = this.physicsBody.linvel();
+        const currentLinVel = new THREE.Vector3(linVel.x, linVel.y, linVel.z);
+
+        const newLinVel = new THREE.Vector3().copy(currentLinVel).add(new THREE.Vector3().copy(toPreferredPositionVec).sub(currentLinVel).multiplyScalar(20).sub(new THREE.Vector3().copy(currentLinVel).multiplyScalar(0.05)).multiplyScalar(delta));
+        this.physicsBody.setLinvel({ x: newLinVel.x, y: newLinVel.y, z: newLinVel.z }, true);
     }
 }

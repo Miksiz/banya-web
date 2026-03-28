@@ -26,7 +26,7 @@ export default class Thermometer extends Entity {
         mercury.interactionObject = group;
         group.add(mercury);
 
-        return group;   
+        return group;
     }
 
     createPhysics() {
@@ -35,7 +35,8 @@ export default class Thermometer extends Entity {
             .setTranslation(...this.mesh.position)
             .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z})
             .setLinearDamping(0.5)     // Сопротивление движению
-            .setAngularDamping(0.5);
+            .setAngularDamping(0.5)
+            .setCcdEnabled(true);
 
         const body = physics.world.createRigidBody(bodyDesc);
         this.physicsBody = body;

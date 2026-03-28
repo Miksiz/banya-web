@@ -9,7 +9,9 @@ import SaunaBox from '../entities/SaunaBox.js';
 import Clock from '../entities/Clock.js';
 import Thermometer from '../entities/Thermometer.js';
 import Door from '../entities/Door.js';
-
+import Ladle from '../entities/Ladle.js';
+// Position:  Vector3 {x: -0.3916890025138855, y: 1.053815245628357, z: -1.1862999200820923}
+// ObjectSelector.js:511 Rotation:  Vector3 {x: -0.5698016175787662, y: -0.0006308358037020978, z: 0.8217820384084883}
 export default class Sauna extends Location {
     initialize() {
         this.entityDesctiptions = [
@@ -20,7 +22,9 @@ export default class Sauna extends Location {
             {entityClass: Bench, position: [-2.6, 0.56, 0.1], rotation: [0, Math.PI/2, 0]},
             {entityClass: Clock, position: [0.0, 2.2, -2.48], rotation: [0, 0, 0]},
             {entityClass: Thermometer, position: [-1.5, 2, -2.48], rotation: [0, 0, 0]},
-            {entityClass: Bucket, position: [-1.28, 0.40, -2.10], rotation: [0, Math.PI * 1.2,0]},
+            {entityClass: Bucket, position: [-1.28, 0.289, -2.10], rotation: [0, Math.PI * 1.2,0]},
+            // {entityClass: Bucket, position: [-0.26168, 1.15381, -0.9863], rotation: [-0.56980, -0.00063, 0.821782]},
+            {entityClass: Ladle, position: [-2.61, 0.8, -0.5], rotation: [0, Math.PI/2, 0]},
         ];
     }
 

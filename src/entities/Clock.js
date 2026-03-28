@@ -46,7 +46,9 @@ export default class Clock extends Entity {
             .setTranslation(...this.mesh.position)
             .setRotation({w: this.mesh.quaternion.w, x: this.mesh.quaternion.x, y: this.mesh.quaternion.y, z: this.mesh.quaternion.z})
             .setLinearDamping(0.5)     // Сопротивление движению
-            .setAngularDamping(100.5);
+            .setAngularDamping(0.5)
+            .setCcdEnabled(true)
+            .setSoftCcdPrediction(10);
 
         const body = physics.world.createRigidBody(bodyDesc);
         this.physicsBody = body;

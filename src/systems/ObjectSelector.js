@@ -222,23 +222,25 @@ export default class ObjectSelector {
     // Создаём кватернионы приращения вокруг локальных осей камеры
     const deltaY = new THREE.Quaternion()
     if (this.horizontalRotationOn) {
-        deltaY.setFromAxisAngle(
-            new THREE.Vector3(0, 1, 0), 
-            movementX * sensitivity
-        );
+      let xMovementRotationVector = new THREE.Vector3(0, 1, 0);
+      if (this.selected.userData?.rotationStrategy == "overTurn") xMovementRotationVector.set(0, 0, 1);
+      deltaY.setFromAxisAngle(
+          xMovementRotationVector,
+          movementX * sensitivity
+      );
     }
+    
     const deltaX = new THREE.Quaternion()
     if (this.verticalRotationOn) {
-        deltaX.setFromAxisAngle(
-            new THREE.Vector3(1, 0, 0), 
-            -movementY * sensitivity
-        );
+      deltaX.setFromAxisAngle(
+          new THREE.Vector3(1, 0, 0), 
+          -movementY * sensitivity
+      );
     }
     
     // Объединяем (Y → X для естественного порядка: yaw, затем pitch)
     const deltaRotation = new THREE.Quaternion().copy(deltaY).multiply(deltaX);
     
-    // Вращаем в пространстве камеры: R' = δ × R (умножение слева = premultiply)
     this.objectRotation.premultiply(deltaRotation);
   }
   enable() {
@@ -425,16 +427,15 @@ export default class ObjectSelector {
     const angVel = physicsBody.angvel();
     const currentAngVel = new THREE.Vector3(angVel.x, angVel.y, angVel.z);
     // Порог - если уже близко, останавливаем
-    const angleThreshold = 0.02;
+    const angleThreshold = 0.0001;
     if (angleDifference < angleThreshold && currentAngVel.length() < 0.2) {
         physicsBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
         return;
     }
-    if (angleDifference > 0.001) {
+    if (angleDifference > angleThreshold) {
       // Нормализуем ось вращения из кватерниона
       const sinHalfAngle = Math.sqrt(deltaQ.x * deltaQ.x + deltaQ.y * deltaQ.y + deltaQ.z * deltaQ.z);
-      
-      if (sinHalfAngle > 0.0001) {
+      if (sinHalfAngle > angleThreshold/2) {
         const axisX = deltaQ.x / sinHalfAngle;
         const axisY = deltaQ.y / sinHalfAngle;
         const axisZ = deltaQ.z / sinHalfAngle;
@@ -442,18 +443,17 @@ export default class ObjectSelector {
         // === PD-контроллер ===
 
         // Целевая угловая скорость (в rad/s)
-        let rotationGain = 25.0;   // P - насколько агрессивно следуем за целью
-        const dampingGain = 2.0;    // D - демпфирование
+        let rotationGain = 50.0;   // P - насколько агрессивно следуем за целью
+        const dampingGain = 10.0;    // D - демпфирование
         
         const bbox = new THREE.Box3().setFromObject(this.selected)
         const objectSize = bbox.max.clone().sub(bbox.min).length()
 
         if (objectSize > 1 || massCorrection > 1) {
-          rotationGain *= 1/massCorrection;
-
+          rotationGain *= 1/massCorrection*2;
         }
         // Ограничиваем максимальную скорость
-        const maxAngularSpeed = 15.0;
+        const maxAngularSpeed = 50.0;
         
         // Target angular velocity = ось * угол * gain
         let targetAngVelX = axisX * angleDifference * rotationGain;
@@ -482,9 +482,9 @@ export default class ObjectSelector {
         const errorZ = targetAngVelZ - currentAngVel.z;
         
         // PD-контроллер: P*error - D*currentVelocity
-        let newAngVelX = errorX * rotationGain - currentAngVel.x * dampingGain;
-        let newAngVelY = errorY * rotationGain - currentAngVel.y * dampingGain;
-        let newAngVelZ = errorZ * rotationGain - currentAngVel.z * dampingGain;
+        let newAngVelX = errorX - currentAngVel.x * dampingGain;
+        let newAngVelY = errorY - currentAngVel.y * dampingGain;
+        let newAngVelZ = errorZ - currentAngVel.z * dampingGain;
         
         // Умножаем на dt для плавности
         newAngVelX *= delta;
